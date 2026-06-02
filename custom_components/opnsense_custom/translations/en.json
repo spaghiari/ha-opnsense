@@ -1,0 +1,81 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "OPNsense — Connexion",
+        "description": "Renseigne les informations de connexion à ton firewall OPNsense.\n\nLa clé API se génère dans OPNsense : System → Access → Users → onglet ApiKeys.",
+        "data": {
+          "host": "Adresse IP ou hostname",
+          "port": "Port HTTPS",
+          "api_key": "Clé API (key)",
+          "api_secret": "Clé API (secret)",
+          "verify_ssl": "Vérifier le certificat SSL"
+        },
+        "data_description": {
+          "verify_ssl": "Désactive si ton OPNsense utilise un certificat auto-signé (cas par défaut)."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter au firewall. Vérifie l'IP/port et que HA peut joindre OPNsense.",
+      "invalid_auth": "Clé API ou secret invalide.",
+      "insufficient_privileges": "L'utilisateur API n'a pas les privilèges requis. Voir la documentation pour la liste des privilèges minimaux."
+    },
+    "abort": {
+      "already_configured": "Ce firewall OPNsense est déjà configuré."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options OPNsense",
+        "description": "Modifie la fréquence de rafraîchissement des données.",
+        "data": {
+          "scan_interval": "Intervalle de polling (secondes)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "hostname": { "name": "Hostname" },
+      "opnsense_version": { "name": "Version OPNsense" },
+      "freebsd_version": { "name": "Version FreeBSD" },
+      "openssl_version": { "name": "Version OpenSSL" },
+      "cpu_model": { "name": "Modèle CPU" },
+      "ram_total": { "name": "RAM totale" },
+      "ram_used": { "name": "RAM utilisée" },
+      "ram_used_percent": { "name": "RAM utilisée (%)" },
+      "disk_root_percent": { "name": "Disque / (%)" },
+      "disk_root_total": { "name": "Disque / total" },
+      "disk_root_used": { "name": "Disque / utilisé" },
+      "disk_root_available": { "name": "Disque / disponible" },
+      "uptime": { "name": "Uptime" },
+      "boottime": { "name": "Dernier démarrage" },
+      "loadavg_1": { "name": "Charge CPU 1 min" },
+      "loadavg_5": { "name": "Charge CPU 5 min" },
+      "loadavg_15": { "name": "Charge CPU 15 min" },
+      "public_ipv4": { "name": "IP publique IPv4" },
+      "public_ipv6": { "name": "IP publique IPv6" },
+      "wan_status": { "name": "Statut WAN" },
+      "firmware_installed": { "name": "Firmware installé" },
+      "firmware_latest": { "name": "Firmware disponible" },
+      "wan_throughput_in": { "name": "Débit WAN entrant" },
+      "wan_throughput_out": { "name": "Débit WAN sortant" },
+      "wan_total_received": { "name": "Total reçu WAN" },
+      "wan_total_transmitted": { "name": "Total transmis WAN" },
+      "wan_top_dest_in": { "name": "Top destination entrante" },
+      "wan_top_dest_out": { "name": "Top destination sortante" }
+    },
+    "binary_sensor": {
+      "update_available": { "name": "Mise à jour disponible" },
+      "wan_connected": { "name": "WAN connecté" }
+    },
+    "button": {
+      "check_updates": { "name": "Vérifier les mises à jour" }
+    },
+    "update": {
+      "firmware": { "name": "Firmware" }
+    }
+  }
+}
