@@ -9,7 +9,7 @@
 
 A custom Home Assistant integration that exposes your **OPNsense firewall** as a native device with rich sensors, a real `update` entity for firmware management, and minimum-privilege API access.
 
-![Integration screenshot](https://raw.githubusercontent.com/spaghiari/ha-opnsense/main/.github/screenshot.png)
+![Integration screenshot](https://raw.githubusercontent.com/zikoner/ha-opnsense/main/.github/screenshot.png)
 
 ---
 
@@ -92,7 +92,7 @@ The secret is shown only on generation. Lose it = regenerate it.
 ### Option A - HACS (recommended)
 
 1. In HACS, go to **Integrations → ⋮ → Custom repositories**
-2. Add `https://github.com/spaghiari/ha-opnsense` as type `Integration`
+2. Add `https://github.com/zikoner/ha-opnsense` as type `Integration`
 3. Find **OPNsense** in the list and click **Download**
 4. **Restart Home Assistant**
 
@@ -323,9 +323,9 @@ This integration is **not affiliated with Deciso B.V.** (OPNsense vendor). "OPNs
 
 ---
 
-[releases-shield]: https://img.shields.io/github/v/release/spaghiari/ha-opnsense?style=flat-square
-[releases]: https://github.com/spaghiari/ha-opnsense/releases
-[license-shield]: https://img.shields.io/github/license/spaghiari/ha-opnsense?style=flat-square
+[releases-shield]: https://img.shields.io/github/v/release/zikoner/ha-opnsense?style=flat-square
+[releases]: https://github.com/zikoner/ha-opnsense/releases
+[license-shield]: https://img.shields.io/github/license/zikoner/ha-opnsense?style=flat-square
 [license]: LICENSE
 [hacs-shield]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat-square
 [hacs]: https://hacs.xyz
