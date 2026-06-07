@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -16,11 +15,13 @@ from .const import (
     CONF_PORT,
     CONF_SCAN_INTERVAL,
     CONF_VERIFY_SSL,
+    CONF_WAN_INTERFACE,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     PLATFORMS,
+    WAN_AUTO,
 )
 from .coordinator import OPNsenseDataCoordinator
 
@@ -43,10 +44,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api_secret: str = entry.data[CONF_API_SECRET]
     verify_ssl: bool = entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
 
-    # L'intervalle de polling est dans entry.options (modifiable via OptionsFlow)
+    # L'intervalle de polling et le choix WAN sont dans entry.options
+    # (modifiables via OptionsFlow sans réinstaller).
     scan_interval: int = entry.options.get(
         CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
     )
+    wan_interface: str = entry.options.get(CONF_WAN_INTERFACE, WAN_AUTO)
 
     session = async_get_clientsession(hass, verify_ssl=verify_ssl)
     client = OPNsenseApiClient(
@@ -63,6 +66,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         client=client,
         scan_interval=scan_interval,
         entry=entry,
+        wan_interface=wan_interface,
     )
 
     # Premier refresh - si ça échoue, on remonte l'erreur et HA ne charge pas

@@ -1,0 +1,16 @@
+# Configuration ruff alignée sur les conventions Home Assistant.
+target-version = "py312"
+line-length = 88
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort (ordre des imports)
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    "B008",  # appels de fonction dans les valeurs par défaut (voluptuous)
+]

@@ -6,13 +6,12 @@ import logging
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import OPNsenseApiError
-from .const import DEFAULT_MODEL, DOMAIN, MANUFACTURER
-from .coordinator import OPNsenseDataCoordinator
+from .const import DOMAIN
+from .coordinator import OPNsenseDataCoordinator, build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,13 +50,7 @@ class OPNsenseCheckUpdatesButton(
             icon="mdi:cloud-search-outline",
         )
         self._attr_unique_id = f"{entry.entry_id}_check_updates"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="OPNsense",
-            manufacturer=MANUFACTURER,
-            model=DEFAULT_MODEL,
-            configuration_url=f"https://{entry.data.get('host')}",
-        )
+        self._attr_device_info = build_device_info(entry, coordinator.data)
 
     async def async_press(self) -> None:
         """Appelle l'API pour lancer le check, puis refresh."""

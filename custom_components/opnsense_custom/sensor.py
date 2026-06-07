@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -16,15 +17,13 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfDataRate,
     UnitOfInformation,
-    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DEFAULT_MODEL, DOMAIN, MANUFACTURER
-from .coordinator import OPNsenseDataCoordinator
+from .const import DOMAIN
+from .coordinator import OPNsenseDataCoordinator, build_device_info, find_wan_row
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -163,7 +162,7 @@ def _boottime(data: dict) -> datetime | None:
         try:
             dt = datetime.strptime(raw, fmt)
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.replace(tzinfo=UTC)
             return dt
         except ValueError:
             continue
@@ -208,13 +207,12 @@ def _loadavg_15(data: dict) -> float | None:
 
 
 def _wan_interface(data: dict) -> dict | None:
-    """Trouve l'interface dont la description est 'WAN'."""
-    rows = _get(data, "interfaces", "rows")
-    if isinstance(rows, list):
-        for row in rows:
-            if isinstance(row, dict) and row.get("description") == "WAN":
-                return row
-    return None
+    """Renvoie la row de l'interface WAN (résolue par le coordinator).
+
+    Le device WAN est déterminé une fois par cycle dans le coordinator
+    (choix utilisateur ou auto-détection) et injecté dans data['_wan_device'].
+    """
+    return find_wan_row(data)
 
 
 def _public_ipv4(data: dict) -> str | None:
@@ -765,34 +763,8 @@ class OPNsenseSensor(CoordinatorEntity[OPNsenseDataCoordinator], SensorEntity):
         self.entity_description = description
         self._value_fn = value_fn
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-
-        # Tous les sensors rattachés au même appareil "OPNsense"
-        hostname = (
-            coordinator.data.get("system_information", {}).get("name")
-            if coordinator.data
-            else None
-        ) or entry.data.get("host", "OPNsense")
-
-        # On essaie de récupérer la version pour DeviceInfo
-        sw_version = None
-        if coordinator.data:
-            versions = (
-                coordinator.data.get("system_information", {}).get("versions")
-                or []
-            )
-            for v in versions:
-                if isinstance(v, str) and v.startswith("OPNsense"):
-                    sw_version = v.replace("OPNsense ", "")
-                    break
-
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="OPNsense",
-            manufacturer=MANUFACTURER,
-            model=DEFAULT_MODEL,
-            sw_version=sw_version,
-            configuration_url=f"https://{entry.data.get('host')}",
-        )
+        # Toutes les entités rattachées au même appareil firewall
+        self._attr_device_info = build_device_info(entry, coordinator.data)
 
     @property
     def native_value(self) -> Any:

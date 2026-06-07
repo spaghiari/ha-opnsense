@@ -1,0 +1,126 @@
+# =============================================================================
+#  Dashboard OPNsense - prêt à l'emploi
+# =============================================================================
+#
+#  Comment l'installer :
+#    1. Settings → Dashboards → ⋮ (en haut à droite) → New dashboard →
+#       "New dashboard from scratch" → donne-lui un nom (ex: "OPNsense").
+#    2. Ouvre le dashboard → ⋮ → Edit dashboard → ⋮ → Raw configuration editor.
+#    3. Colle le contenu ci-dessous, puis Save.
+#
+#  Pré-requis : l'intégration "OPNsense" installée et le device nommé
+#  "OPNsense" (valeur par défaut). Les entity_id sont de la forme
+#  `sensor.opnsense_*` et sont stables quelle que soit la langue de l'UI.
+#  Si tu as renommé le device, adapte le préfixe des entity_id en conséquence.
+# =============================================================================
+
+title: OPNsense
+views:
+  - title: Vue d'ensemble
+    path: opnsense
+    type: sections
+    max_columns: 3
+    sections:
+      # ------------------------------------------------------------- État
+      - type: grid
+        cards:
+          - type: heading
+            heading: État du firewall
+            heading_style: title
+
+          - type: entities
+            title: Système
+            show_header_toggle: false
+            entities:
+              - entity: sensor.opnsense_hostname
+                name: Hostname
+              - entity: sensor.opnsense_opnsense_version
+                name: Version OPNsense
+              - entity: sensor.opnsense_uptime
+                name: Uptime
+              - entity: binary_sensor.opnsense_wan_connected
+                name: WAN
+              - entity: sensor.opnsense_public_ipv4
+                name: IP publique
+
+          - type: update
+            entity: update.opnsense_firmware
+
+          - type: button
+            entity: button.opnsense_check_for_updates
+            name: Vérifier les mises à jour
+            icon: mdi:cloud-search-outline
+            show_state: false
+
+      # ----------------------------------------------------------- Ressources
+      - type: grid
+        cards:
+          - type: heading
+            heading: Ressources
+            heading_style: title
+
+          - type: gauge
+            entity: sensor.opnsense_ram_used
+            name: RAM
+            unit: "%"
+            min: 0
+            max: 100
+            severity:
+              green: 0
+              yellow: 70
+              red: 90
+
+          - type: gauge
+            entity: sensor.opnsense_disk
+            name: Disque /
+            unit: "%"
+            min: 0
+            max: 100
+            severity:
+              green: 0
+              yellow: 75
+              red: 90
+
+          - type: gauge
+            entity: sensor.opnsense_cpu_load_1_min
+            name: Charge CPU (1 min)
+            min: 0
+            max: 8
+            needle: true
+            severity:
+              green: 0
+              yellow: 4
+              red: 6
+
+      # -------------------------------------------------------------- Trafic WAN
+      - type: grid
+        cards:
+          - type: heading
+            heading: Trafic WAN
+            heading_style: title
+
+          - type: history-graph
+            hours_to_show: 24
+            title: Débit WAN
+            entities:
+              - entity: sensor.opnsense_wan_throughput_in
+                name: Entrant
+              - entity: sensor.opnsense_wan_throughput_out
+                name: Sortant
+
+          - type: glance
+            title: Total transféré
+            entities:
+              - entity: sensor.opnsense_wan_total_received
+                name: Reçu
+              - entity: sensor.opnsense_wan_total_transmitted
+                name: Transmis
+
+          - type: entities
+            title: Top destinations
+            show_header_toggle: false
+            entities:
+              - entity: sensor.opnsense_top_inbound_destination
+                name: Download #1
+              - entity: sensor.opnsense_top_outbound_destination
+                name: Upload #1

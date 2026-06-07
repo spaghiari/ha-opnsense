@@ -9,16 +9,16 @@
 
 A custom Home Assistant integration that exposes your **OPNsense firewall** as a native device with rich sensors, a real `update` entity for firmware management, and minimum-privilege API access.
 
-![Integration screenshot](https://raw.githubusercontent.com/zikoner/ha-opnsense/main/.github/screenshot.png)
+![Integration screenshot](https://raw.githubusercontent.com/spaghiari/ha-opnsense/main/.github/screenshot.png)
 
 ---
 
 ## ✨ Features
 
 ### System monitoring
-- **CPU load** — 1/5/15 min averages
-- **RAM** — total, used, used %
-- **Disk** — root partition usage with %
+- **CPU load** - 1/5/15 min averages
+- **RAM** - total, used, used %
+- **Disk** - root partition usage with %
 - **Uptime + last boot timestamp**
 - **Hostname** + **CPU model**
 - **OPNsense / FreeBSD / OpenSSL versions**
@@ -31,13 +31,13 @@ A custom Home Assistant integration that exposes your **OPNsense firewall** as a
 - **WAN connectivity** binary sensor
 
 ### Firmware management
-- **Native `update` entity** — compare installed vs latest version, one-click install
+- **Native `update` entity** - compare installed vs latest version, one-click install
 - **"Check for updates" button** to force a check on demand
 - **`update_available` binary sensor** ready for automations
 
 ### Configuration
-- **Setup via UI** — no YAML editing
-- **Polling interval configurable** at runtime (30–600 seconds)
+- **Setup via UI** - no YAML editing
+- **Polling interval configurable** at runtime (30-600 seconds)
 - **Multi-language UI** (English, French)
 
 ---
@@ -45,7 +45,7 @@ A custom Home Assistant integration that exposes your **OPNsense firewall** as a
 ## 📋 Prerequisites
 
 ### Supported versions
-- Home Assistant Core **2024.1.0** or newer
+- Home Assistant Core **2024.4.0** or newer
 - OPNsense **26.1** or newer (older versions may work but are untested)
 
 ### OPNsense setup
@@ -66,17 +66,17 @@ Go to **System → Access → Groups → +** and create a group with these **8 p
 | `System: Status` | System information endpoint |
 | `Reporting: Traffic` | WAN throughput sensors |
 
-> ⚠️ **Do NOT grant "All pages"** — that would defeat the purpose of a restricted user.
+> ⚠️ **Do NOT grant "All pages"** - that would defeat the purpose of a restricted user.
 
 #### 2. Create a user
 **System → Access → Users → +**:
 - Username: `homeassistant`
-- Password: any random 32-character string (never used — just required by the form)
-- Login shell: `Default (none for all but root)` — **no SSH access**
+- Password: any random 32-character string (never used - just required by the form)
+- Login shell: `Default (none for all but root)` - **no SSH access**
 - Group membership: assign your newly created group
 
 #### 3. Generate an API key
-On the user list, click the **"key" icon** next to `homeassistant`. An `apikey.txt` file downloads automatically. **Open it once and save securely** — it contains:
+On the user list, click the **"key" icon** next to `homeassistant`. An `apikey.txt` file downloads automatically. **Open it once and save securely** - it contains:
 
 ```
 key=...
@@ -89,14 +89,14 @@ The secret is shown only on generation. Lose it = regenerate it.
 
 ## 🚀 Installation
 
-### Option A — HACS (recommended)
+### Option A - HACS (recommended)
 
 1. In HACS, go to **Integrations → ⋮ → Custom repositories**
-2. Add `https://github.com/zikoner/ha-opnsense` as type `Integration`
+2. Add `https://github.com/spaghiari/ha-opnsense` as type `Integration`
 3. Find **OPNsense** in the list and click **Download**
 4. **Restart Home Assistant**
 
-### Option B — Manual
+### Option B - Manual
 
 1. Download the latest release ZIP from [releases][releases]
 2. Extract `custom_components/opnsense_custom/` into your HA `config/custom_components/` folder
@@ -116,14 +116,38 @@ The secret is shown only on generation. Lose it = regenerate it.
    - **API secret**: the `secret=` value
    - **Verify SSL certificate**: leave **unchecked** if using OPNsense's self-signed certificate (default)
 4. Click **Submit**
+5. **Pick the WAN interface** to monitor (throughput, public IP, connectivity).
+   The integration pre-selects the auto-detected one - leave it on
+   **Auto-detection** unless you run a non-standard / multi-WAN setup.
 
 The integration tests the connection. On success, an **OPNsense** device appears with ~30 entities.
 
-### Polling interval
+### Polling interval & WAN interface
 
-By default the integration polls OPNsense every **60 seconds**. To change:
+Change the polling rate and the WAN interface at any time without reinstalling:
 
-**Settings → Devices & Services → OPNsense → ⚙ Configure** → set value between 30 and 600 seconds.
+**Settings → Devices & Services → OPNsense → ⚙ Configure** → set the polling
+interval (30-600 s) and the WAN interface.
+
+### If your API key changes
+
+Rotated or revoked the key in OPNsense? Home Assistant raises a
+**re-authentication** prompt automatically - enter the new key/secret and the
+integration reloads. You can also use **⋮ → Reconfigure** to change host/port.
+
+---
+
+## 🖥️ Ready-made dashboard
+
+A starter dashboard is provided in [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml):
+system status, RAM/disk/CPU gauges, WAN throughput graph and top destinations.
+
+**Settings → Dashboards → ⋮ → New dashboard → from scratch**, then **Edit →
+⋮ → Raw configuration editor** and paste the file's contents.
+
+> The cards assume the device is named **OPNsense** (the default), so entity IDs
+> are `sensor.opnsense_*`. If a card shows *entity not found*, open the entity in
+> HA and copy its real ID - auto-generated IDs can vary slightly between versions.
 
 ---
 
@@ -199,7 +223,7 @@ content: |
   {%- set top = state_attr('sensor.opnsense_wan_top_destination_in', 'top_5') %}
   {%- if top %}
   {%- for d in top %}
-  **#{{ loop.index }}** — `{{ d.name }}` — **{{ d.rate_mbps }} Mbps**
+  **#{{ loop.index }}** - `{{ d.name }}` - **{{ d.rate_mbps }} Mbps**
   {% endfor %}
   {%- else %}
   *No significant traffic*
@@ -238,7 +262,7 @@ This usually means a **privilege is missing** on OPNsense. Check Home Assistant 
 → Add the corresponding privilege to the `homeassistant` group.
 
 ### "Insufficient privileges" error
-Same as above — your API user doesn't have one of the 8 required privileges. Add the missing one and retry.
+Same as above - your API user doesn't have one of the 8 required privileges. Add the missing one and retry.
 
 ---
 
@@ -261,14 +285,14 @@ When filing a bug report, include:
 ## ⚠️ Important notes
 
 - **Always back up your OPNsense XML config** (System → Configuration → Backups) before triggering a firmware update from Home Assistant
-- The integration uses **only documented API endpoints** — no SSH, no XML modification
+- The integration uses **only documented API endpoints** - no SSH, no XML modification
 - **Zenarmor metrics** are not yet supported (Zenarmor requires a separate API via Zenconsole, planned for a future companion integration)
 
 ---
 
 ## 📜 License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
 
 This integration is **not affiliated with Deciso B.V.** (OPNsense vendor). "OPNsense" is a trademark of Deciso B.V.
 
@@ -281,9 +305,9 @@ This integration is **not affiliated with Deciso B.V.** (OPNsense vendor). "OPNs
 
 ---
 
-[releases-shield]: https://img.shields.io/github/v/release/zikoner/ha-opnsense?style=flat-square
-[releases]: https://github.com/zikoner/ha-opnsense/releases
-[license-shield]: https://img.shields.io/github/license/zikoner/ha-opnsense?style=flat-square
+[releases-shield]: https://img.shields.io/github/v/release/spaghiari/ha-opnsense?style=flat-square
+[releases]: https://github.com/spaghiari/ha-opnsense/releases
+[license-shield]: https://img.shields.io/github/license/spaghiari/ha-opnsense?style=flat-square
 [license]: LICENSE
 [hacs-shield]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat-square
 [hacs]: https://hacs.xyz

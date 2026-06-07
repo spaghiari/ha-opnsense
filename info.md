@@ -18,7 +18,7 @@ A custom integration to monitor your **OPNsense firewall** from Home Assistant.
 3. Settings → Devices & Services → Add Integration → **OPNsense**
 4. Enter your OPNsense IP, port, API key and secret
 
-Full setup guide with required OPNsense privileges in the [README](https://github.com/zikoner/ha-opnsense/blob/main/README.md).
+Full setup guide with required OPNsense privileges in the [README](https://github.com/spaghiari/ha-opnsense/blob/main/README.md).
 
 ## Security
 
@@ -26,4 +26,4 @@ This integration uses an **API key with minimal privileges** (read-only + firmwa
 
 ## Tested Against
 
-OPNsense 26.1.x · Home Assistant Core 2024.1+
+OPNsense 26.1.x · Home Assistant Core 2024.4+

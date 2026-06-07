@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "OPNsense — Connexion",
+        "title": "OPNsense - Connexion",
         "description": "Renseigne les informations de connexion à ton firewall OPNsense.\n\nLa clé API se génère dans OPNsense : System → Access → Users → onglet ApiKeys.",
         "data": {
           "host": "Adresse IP ou hostname",
@@ -14,6 +14,35 @@
         "data_description": {
           "verify_ssl": "Désactive si ton OPNsense utilise un certificat auto-signé (cas par défaut)."
         }
+      },
+      "wan": {
+        "title": "OPNsense - Interface WAN",
+        "description": "Choisis l'interface à surveiller comme WAN (débit, IP publique, connectivité). L'auto-détection convient à la plupart des installations.",
+        "data": {
+          "wan_interface": "Interface WAN"
+        }
+      },
+      "reauth_confirm": {
+        "title": "OPNsense - Ré-authentification",
+        "description": "Ta clé API a été rejetée par OPNsense. Saisis des identifiants valides pour rétablir la connexion.",
+        "data": {
+          "host": "Adresse IP ou hostname",
+          "port": "Port HTTPS",
+          "api_key": "Clé API (key)",
+          "api_secret": "Clé API (secret)",
+          "verify_ssl": "Vérifier le certificat SSL"
+        }
+      },
+      "reconfigure": {
+        "title": "OPNsense - Reconfiguration",
+        "description": "Modifie les paramètres de connexion de ce firewall.",
+        "data": {
+          "host": "Adresse IP ou hostname",
+          "port": "Port HTTPS",
+          "api_key": "Clé API (key)",
+          "api_secret": "Clé API (secret)",
+          "verify_ssl": "Vérifier le certificat SSL"
+        }
       }
     },
     "error": {
@@ -22,16 +51,20 @@
       "insufficient_privileges": "L'utilisateur API n'a pas les privilèges requis. Voir la documentation pour la liste des privilèges minimaux."
     },
     "abort": {
-      "already_configured": "Ce firewall OPNsense est déjà configuré."
+      "already_configured": "Ce firewall OPNsense est déjà configuré.",
+      "reauth_successful": "Ré-authentification réussie.",
+      "reconfigure_successful": "Configuration mise à jour.",
+      "unique_id_mismatch": "Ces identifiants correspondent à un autre firewall OPNsense que celui en cours de configuration."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Options OPNsense",
-        "description": "Modifie la fréquence de rafraîchissement des données.",
+        "description": "Modifie la fréquence de rafraîchissement et l'interface WAN.",
         "data": {
-          "scan_interval": "Intervalle de polling (secondes)"
+          "scan_interval": "Intervalle de polling (secondes)",
+          "wan_interface": "Interface WAN"
         }
       }
     }

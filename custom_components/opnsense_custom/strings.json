@@ -2,36 +2,69 @@
   "config": {
     "step": {
       "user": {
-        "title": "OPNsense — Connexion",
-        "description": "Renseigne les informations de connexion à ton firewall OPNsense.\n\nLa clé API se génère dans OPNsense : System → Access → Users → onglet ApiKeys.",
+        "title": "OPNsense - Connection",
+        "description": "Enter the connection details for your OPNsense firewall.\n\nGenerate the API key in OPNsense: System → Access → Users → ApiKeys tab.",
         "data": {
-          "host": "Adresse IP ou hostname",
-          "port": "Port HTTPS",
-          "api_key": "Clé API (key)",
-          "api_secret": "Clé API (secret)",
-          "verify_ssl": "Vérifier le certificat SSL"
+          "host": "IP address or hostname",
+          "port": "HTTPS port",
+          "api_key": "API key",
+          "api_secret": "API secret",
+          "verify_ssl": "Verify SSL certificate"
         },
         "data_description": {
-          "verify_ssl": "Désactive si ton OPNsense utilise un certificat auto-signé (cas par défaut)."
+          "verify_ssl": "Disable if your OPNsense uses a self-signed certificate (the default case)."
+        }
+      },
+      "wan": {
+        "title": "OPNsense - WAN interface",
+        "description": "Choose the interface to monitor as WAN (throughput, public IP, connectivity). Auto-detection works for most setups.",
+        "data": {
+          "wan_interface": "WAN interface"
+        }
+      },
+      "reauth_confirm": {
+        "title": "OPNsense - Re-authentication",
+        "description": "Your API key was rejected by OPNsense. Enter valid credentials to restore the connection.",
+        "data": {
+          "host": "IP address or hostname",
+          "port": "HTTPS port",
+          "api_key": "API key",
+          "api_secret": "API secret",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "reconfigure": {
+        "title": "OPNsense - Reconfigure",
+        "description": "Update the connection settings for this firewall.",
+        "data": {
+          "host": "IP address or hostname",
+          "port": "HTTPS port",
+          "api_key": "API key",
+          "api_secret": "API secret",
+          "verify_ssl": "Verify SSL certificate"
         }
       }
     },
     "error": {
-      "cannot_connect": "Impossible de se connecter au firewall. Vérifie l'IP/port et que HA peut joindre OPNsense.",
-      "invalid_auth": "Clé API ou secret invalide.",
-      "insufficient_privileges": "L'utilisateur API n'a pas les privilèges requis. Voir la documentation pour la liste des privilèges minimaux."
+      "cannot_connect": "Unable to reach the firewall. Check the IP/port and that HA can reach OPNsense.",
+      "invalid_auth": "Invalid API key or secret.",
+      "insufficient_privileges": "The API user lacks the required privileges. See the documentation for the minimal privilege list."
     },
     "abort": {
-      "already_configured": "Ce firewall OPNsense est déjà configuré."
+      "already_configured": "This OPNsense firewall is already configured.",
+      "reauth_successful": "Re-authentication successful.",
+      "reconfigure_successful": "Configuration updated.",
+      "unique_id_mismatch": "Those credentials belong to a different OPNsense firewall than the one being configured."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Options OPNsense",
-        "description": "Modifie la fréquence de rafraîchissement des données.",
+        "title": "OPNsense options",
+        "description": "Adjust the data refresh rate and the WAN interface.",
         "data": {
-          "scan_interval": "Intervalle de polling (secondes)"
+          "scan_interval": "Polling interval (seconds)",
+          "wan_interface": "WAN interface"
         }
       }
     }
@@ -39,40 +72,40 @@
   "entity": {
     "sensor": {
       "hostname": { "name": "Hostname" },
-      "opnsense_version": { "name": "Version OPNsense" },
-      "freebsd_version": { "name": "Version FreeBSD" },
-      "openssl_version": { "name": "Version OpenSSL" },
-      "cpu_model": { "name": "Modèle CPU" },
-      "ram_total": { "name": "RAM totale" },
-      "ram_used": { "name": "RAM utilisée" },
-      "ram_used_percent": { "name": "RAM utilisée (%)" },
-      "disk_root_percent": { "name": "Disque / (%)" },
-      "disk_root_total": { "name": "Disque / total" },
-      "disk_root_used": { "name": "Disque / utilisé" },
-      "disk_root_available": { "name": "Disque / disponible" },
+      "opnsense_version": { "name": "OPNsense version" },
+      "freebsd_version": { "name": "FreeBSD version" },
+      "openssl_version": { "name": "OpenSSL version" },
+      "cpu_model": { "name": "CPU model" },
+      "ram_total": { "name": "Total RAM" },
+      "ram_used": { "name": "Used RAM" },
+      "ram_used_percent": { "name": "RAM used (%)" },
+      "disk_root_percent": { "name": "Disk / (%)" },
+      "disk_root_total": { "name": "Disk / total" },
+      "disk_root_used": { "name": "Disk / used" },
+      "disk_root_available": { "name": "Disk / available" },
       "uptime": { "name": "Uptime" },
-      "boottime": { "name": "Dernier démarrage" },
-      "loadavg_1": { "name": "Charge CPU 1 min" },
-      "loadavg_5": { "name": "Charge CPU 5 min" },
-      "loadavg_15": { "name": "Charge CPU 15 min" },
-      "public_ipv4": { "name": "IP publique IPv4" },
-      "public_ipv6": { "name": "IP publique IPv6" },
-      "wan_status": { "name": "Statut WAN" },
-      "firmware_installed": { "name": "Firmware installé" },
-      "firmware_latest": { "name": "Firmware disponible" },
-      "wan_throughput_in": { "name": "Débit WAN entrant" },
-      "wan_throughput_out": { "name": "Débit WAN sortant" },
-      "wan_total_received": { "name": "Total reçu WAN" },
-      "wan_total_transmitted": { "name": "Total transmis WAN" },
-      "wan_top_dest_in": { "name": "Top destination entrante" },
-      "wan_top_dest_out": { "name": "Top destination sortante" }
+      "boottime": { "name": "Last boot" },
+      "loadavg_1": { "name": "CPU load 1 min" },
+      "loadavg_5": { "name": "CPU load 5 min" },
+      "loadavg_15": { "name": "CPU load 15 min" },
+      "public_ipv4": { "name": "Public IPv4" },
+      "public_ipv6": { "name": "Public IPv6" },
+      "wan_status": { "name": "WAN status" },
+      "firmware_installed": { "name": "Installed firmware" },
+      "firmware_latest": { "name": "Available firmware" },
+      "wan_throughput_in": { "name": "WAN throughput in" },
+      "wan_throughput_out": { "name": "WAN throughput out" },
+      "wan_total_received": { "name": "WAN total received" },
+      "wan_total_transmitted": { "name": "WAN total transmitted" },
+      "wan_top_dest_in": { "name": "Top inbound destination" },
+      "wan_top_dest_out": { "name": "Top outbound destination" }
     },
     "binary_sensor": {
-      "update_available": { "name": "Mise à jour disponible" },
-      "wan_connected": { "name": "WAN connecté" }
+      "update_available": { "name": "Update available" },
+      "wan_connected": { "name": "WAN connected" }
     },
     "button": {
-      "check_updates": { "name": "Vérifier les mises à jour" }
+      "check_updates": { "name": "Check for updates" }
     },
     "update": {
       "firmware": { "name": "Firmware" }

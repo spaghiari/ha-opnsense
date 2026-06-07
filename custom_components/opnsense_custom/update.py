@@ -12,13 +12,12 @@ from homeassistant.components.update import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import OPNsenseApiError
-from .const import DEFAULT_MODEL, DOMAIN, MANUFACTURER
-from .coordinator import OPNsenseDataCoordinator
+from .const import DOMAIN
+from .coordinator import OPNsenseDataCoordinator, build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,13 +61,7 @@ class OPNsenseUpdate(CoordinatorEntity[OPNsenseDataCoordinator], UpdateEntity):
         self._attr_unique_id = f"{entry.entry_id}_firmware_update"
         self._attr_title = "OPNsense"
         self._installing = False
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="OPNsense",
-            manufacturer=MANUFACTURER,
-            model=DEFAULT_MODEL,
-            configuration_url=f"https://{entry.data.get('host')}",
-        )
+        self._attr_device_info = build_device_info(entry, coordinator.data)
 
     def _fw(self) -> dict[str, Any] | None:
         """Renvoie le sous-dict firmware_status si dispo."""
@@ -162,9 +155,15 @@ class OPNsenseUpdate(CoordinatorEntity[OPNsenseDataCoordinator], UpdateEntity):
         """Disponible si le coordinator a des données firmware."""
         return super().available and self._fw() is not None
 
-    def _coordinator_updated(self) -> None:
-        """Reset le flag installing quand la version installée change."""
+    def _handle_coordinator_update(self) -> None:
+        """Reset le flag installing quand la version installée change.
+
+        NB : le bon hook de CoordinatorEntity est `_handle_coordinator_update`
+        (et non `_coordinator_updated`, qui n'est jamais appelé). Sans ça, le
+        flag `_installing` ne redescendait jamais et l'entité restait bloquée
+        en "installation en cours".
+        """
         # Si HA voit une nouvelle version installée, l'installation est finie
         if self._installing and self.installed_version == self.latest_version:
             self._installing = False
-        super()._coordinator_updated()
+        super()._handle_coordinator_update()

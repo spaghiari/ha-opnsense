@@ -94,7 +94,7 @@ class OPNsenseApiClient:
                     return await response.json()
                 text = await response.text()
                 return {"raw": text}
-        except asyncio.TimeoutError as err:
+        except TimeoutError as err:
             raise OPNsenseApiError(f"Timeout sur {path}") from err
         except ClientError as err:
             raise OPNsenseApiError(f"Erreur réseau sur {path}: {err}") from err
@@ -140,14 +140,29 @@ class OPNsenseApiClient:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         data: dict[str, dict[str, Any] | None] = {}
-        for key, result in zip(keys, results):
-            if isinstance(result, Exception):
+        for key, result in zip(keys, results, strict=True):
+            if isinstance(result, OPNsenseAuthError):
+                # Clé API invalide : erreur fatale, on remonte pour déclencher
+                # le flux de ré-authentification côté coordinator.
+                raise result
+            if isinstance(result, OPNsenseForbiddenError):
+                # Privilège manquant sur CET endpoint : on dégrade proprement
+                # (les autres capteurs continuent de fonctionner).
+                _LOGGER.warning(
+                    "Privilège manquant pour '%s' côté OPNsense: %s", key, result
+                )
+                data[key] = None
+            elif isinstance(result, Exception):
                 _LOGGER.warning(
                     "Échec de récupération de '%s': %s", key, result
                 )
                 data[key] = None
             else:
                 data[key] = result
+
+        # NB : on ne lève pas ici si tout est None. Le coordinator vérifie
+        # `system_information` et remonte un UpdateFailed explicite
+        # ("vérifier les privilèges"), message plus juste qu'un "injoignable".
         return data
 
     async def async_check_for_updates(self) -> dict[str, Any]:
