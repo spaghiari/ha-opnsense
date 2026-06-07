@@ -61,10 +61,11 @@
     "step": {
       "init": {
         "title": "Options OPNsense",
-        "description": "Modifie la fréquence de rafraîchissement et l'interface WAN.",
+        "description": "Modifie la fréquence de rafraîchissement, l'interface WAN et le dashboard de la barre latérale.",
         "data": {
           "scan_interval": "Intervalle de polling (secondes)",
-          "wan_interface": "Interface WAN"
+          "wan_interface": "Interface WAN",
+          "create_dashboard": "Créer un dashboard OPNsense dans la barre latérale"
         }
       }
     }

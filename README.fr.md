@@ -141,17 +141,21 @@ clé/secret et l'intégration se recharge. Vous pouvez aussi utiliser
 
 ## 🖥️ Dashboard prêt à l'emploi
 
-Un dashboard de démarrage est fourni dans [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml) :
-état système, jauges RAM/disque/CPU, graphe de débit WAN et top destinations.
+**Automatique** - à l'installation, l'intégration crée un dashboard **OPNsense**
+dans la barre latérale (état système, jauges RAM/disque/CPU, graphe de débit
+WAN, top destinations). Il est construit à partir de tes **vrais entity_id**,
+donc il fonctionne quelle que soit la langue de ton Home Assistant.
+Désactivable à tout moment via **OPNsense → ⚙ Configurer → Créer un dashboard
+OPNsense dans la barre latérale**.
 
+> Tes modifications sont préservées : l'intégration ne pose la mise en page par
+> défaut qu'une seule fois et n'écrase jamais un dashboard que tu as personnalisé.
+
+Un fallback manuel (pour une seconde copie ou une version sur-mesure) reste
+fourni dans [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml) - colle-le via
 **Paramètres → Tableaux de bord → ⋮ → Nouveau tableau de bord → à partir de
-zéro**, puis **Modifier → ⋮ → Éditeur de configuration en YAML** et collez le
-contenu du fichier.
-
-> Les cartes supposent que l'appareil s'appelle **OPNsense** (valeur par
-> défaut), donc les entity_id sont `sensor.opnsense_*`. Si une carte affiche
-> *entité introuvable*, ouvrez l'entité dans HA et copiez son vrai identifiant
-> - les IDs auto-générés peuvent légèrement varier selon les versions.
+zéro → Éditeur de configuration en YAML**. Adapte les entity_id `sensor.opnsense_*`
+à ton instance (ils dépendent de la langue de ton HA).
 
 ---
 

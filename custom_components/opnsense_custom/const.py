@@ -13,6 +13,11 @@ CONF_SCAN_INTERVAL = "scan_interval"
 # Device de l'interface WAN choisie par l'utilisateur (ex: "igc0").
 # Vide => auto-détection (route par défaut / IP publique / description).
 CONF_WAN_INTERFACE = "wan_interface"
+# Crée automatiquement un dashboard "OPNsense" dans la barre latérale.
+CONF_CREATE_DASHBOARD = "create_dashboard"
+DEFAULT_CREATE_DASHBOARD = True
+# url_path de base du dashboard auto-généré (suffixé si plusieurs firewalls).
+DASHBOARD_URL_PATH = "opnsense"
 
 # Valeurs par défaut
 DEFAULT_PORT = 443

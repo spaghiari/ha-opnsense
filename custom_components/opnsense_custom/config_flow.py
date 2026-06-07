@@ -30,11 +30,13 @@ from .api import (
 from .const import (
     CONF_API_KEY,
     CONF_API_SECRET,
+    CONF_CREATE_DASHBOARD,
     CONF_HOST,
     CONF_PORT,
     CONF_SCAN_INTERVAL,
     CONF_VERIFY_SSL,
     CONF_WAN_INTERFACE,
+    DEFAULT_CREATE_DASHBOARD,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_VERIFY_SSL,
@@ -172,6 +174,7 @@ class OPNsenseConfigFlow(ConfigFlow, domain=DOMAIN):
                 options={
                     CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
                     CONF_WAN_INTERFACE: user_input[CONF_WAN_INTERFACE],
+                    CONF_CREATE_DASHBOARD: DEFAULT_CREATE_DASHBOARD,
                 },
             )
 
@@ -299,6 +302,9 @@ class OPNsenseOptionsFlow(OptionsFlow):
             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
         )
         current_wan = self._entry.options.get(CONF_WAN_INTERFACE, WAN_AUTO)
+        current_dashboard = self._entry.options.get(
+            CONF_CREATE_DASHBOARD, DEFAULT_CREATE_DASHBOARD
+        )
 
         # Récupère la liste des interfaces depuis les données déjà pollées
         rows = None
@@ -324,6 +330,9 @@ class OPNsenseOptionsFlow(OptionsFlow):
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Required(
+                    CONF_CREATE_DASHBOARD, default=current_dashboard
+                ): bool,
             }
         )
 

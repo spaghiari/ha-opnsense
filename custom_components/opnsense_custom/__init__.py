@@ -24,6 +24,11 @@ from .const import (
     WAN_AUTO,
 )
 from .coordinator import OPNsenseDataCoordinator
+from .dashboard import (
+    async_delete_dashboard,
+    async_register_dashboard,
+    async_unregister_dashboard,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +86,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Charge les plateformes (sensor, binary_sensor, button, update)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Pose le dashboard "OPNsense" dans la sidebar (après que les entités
+    # soient enregistrées, pour lire leurs entity_id réels). Best-effort.
+    await async_register_dashboard(hass, entry)
+
     return True
 
 
@@ -90,8 +99,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry, PLATFORMS
     )
     if unload_ok:
+        await async_unregister_dashboard(hass, entry)
         hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Nettoyage à la suppression de l'intégration : supprime le dashboard."""
+    await async_delete_dashboard(hass, entry)
 
 
 async def _async_options_updated(

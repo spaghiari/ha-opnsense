@@ -61,10 +61,11 @@
     "step": {
       "init": {
         "title": "OPNsense options",
-        "description": "Adjust the data refresh rate and the WAN interface.",
+        "description": "Adjust the data refresh rate, the WAN interface and the sidebar dashboard.",
         "data": {
           "scan_interval": "Polling interval (seconds)",
-          "wan_interface": "WAN interface"
+          "wan_interface": "WAN interface",
+          "create_dashboard": "Create an OPNsense dashboard in the sidebar"
         }
       }
     }

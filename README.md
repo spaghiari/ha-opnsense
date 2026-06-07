@@ -139,15 +139,20 @@ integration reloads. You can also use **⋮ → Reconfigure** to change host/por
 
 ## 🖥️ Ready-made dashboard
 
-A starter dashboard is provided in [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml):
-system status, RAM/disk/CPU gauges, WAN throughput graph and top destinations.
+**Automatic** - on setup, the integration creates an **OPNsense** dashboard in
+the sidebar (system status, RAM/disk/CPU gauges, WAN throughput graph, top
+destinations). It is built from your **real entity IDs**, so it works whatever
+your Home Assistant language is. Disable it any time via
+**OPNsense → ⚙ Configure → Create an OPNsense dashboard in the sidebar**.
 
-**Settings → Dashboards → ⋮ → New dashboard → from scratch**, then **Edit →
-⋮ → Raw configuration editor** and paste the file's contents.
+> Your edits are preserved: the integration only seeds the default layout once
+> and never overwrites a dashboard you have customised.
 
-> The cards assume the device is named **OPNsense** (the default), so entity IDs
-> are `sensor.opnsense_*`. If a card shows *entity not found*, open the entity in
-> HA and copy its real ID - auto-generated IDs can vary slightly between versions.
+A manual fallback (for a second copy or a custom build) is also provided in
+[`dashboards/opnsense.yaml`](dashboards/opnsense.yaml) - paste it via
+**Settings → Dashboards → ⋮ → New dashboard → from scratch → Raw configuration
+editor**. Adjust the `sensor.opnsense_*` entity IDs to match your instance
+(they depend on your HA language).
 
 ---
 
