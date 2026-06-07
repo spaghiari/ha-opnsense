@@ -139,23 +139,37 @@ clé/secret et l'intégration se recharge. Vous pouvez aussi utiliser
 
 ---
 
-## 🖥️ Dashboard prêt à l'emploi
+## 🖥️ Dashboard prêt à l'emploi (Glass NOC)
 
 **Automatique** - à l'installation, l'intégration crée un dashboard **OPNsense**
-dans la barre latérale (état système, jauges RAM/disque/CPU, graphe de débit
-WAN, top destinations). Il est construit à partir de tes **vrais entity_id**,
-donc il fonctionne quelle que soit la langue de ton Home Assistant.
-Désactivable à tout moment via **OPNsense → ⚙ Configurer → Créer un dashboard
-OPNsense dans la barre latérale**.
+soigné dans la barre latérale : hero glassmorphism, chips d'état, jauges
+circulaires RAM/disque/CPU, graphe de débit WAN et top destinations. Il est
+construit à partir de tes **vrais entity_id**, donc il fonctionne quelle que
+soit la langue de ton Home Assistant. Désactivable à tout moment via
+**OPNsense → ⚙ Configurer → Créer un dashboard OPNsense dans la barre latérale**.
 
-> Tes modifications sont préservées : l'intégration ne pose la mise en page par
-> défaut qu'une seule fois et n'écrase jamais un dashboard que tu as personnalisé.
+### Prérequis frontend (cartes HACS)
 
-Un fallback manuel (pour une seconde copie ou une version sur-mesure) reste
-fourni dans [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml) - colle-le via
-**Paramètres → Tableaux de bord → ⋮ → Nouveau tableau de bord → à partir de
-zéro → Éditeur de configuration en YAML**. Adapte les entity_id `sensor.opnsense_*`
-à ton instance (ils dépendent de la langue de ton HA).
+Le dashboard par défaut utilise ces cartes custom - installe-les depuis
+**HACS → Frontend** (une fois) pour le rendu prévu :
+
+| Carte | Nom HACS |
+|---|---|
+| Mushroom | `Mushroom` |
+| ApexCharts Card | `apexcharts-card` |
+| Mini Graph Card | `mini-graph-card` |
+| card-mod | `card-mod` |
+| Stack In Card | `stack-in-card` |
+
+Si une carte manque, l'intégration loggue un avertissement (filtre
+`opnsense_custom`) et la carte s'affiche en « Custom element doesn't exist » -
+installe-la puis recharge.
+
+> **Dashboard géré.** La mise en page est rafraîchie quand l'intégration livre
+> une nouvelle version de gabarit : tes éditions manuelles dessus peuvent être
+> écrasées lors d'une mise à jour. Pour personnaliser librement, désactive
+> l'option et duplique le dashboard, ou pars de
+> [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml).
 
 ---
 

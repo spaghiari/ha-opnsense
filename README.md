@@ -137,22 +137,35 @@ integration reloads. You can also use **⋮ → Reconfigure** to change host/por
 
 ---
 
-## 🖥️ Ready-made dashboard
+## 🖥️ Ready-made dashboard (Glass NOC)
 
-**Automatic** - on setup, the integration creates an **OPNsense** dashboard in
-the sidebar (system status, RAM/disk/CPU gauges, WAN throughput graph, top
-destinations). It is built from your **real entity IDs**, so it works whatever
-your Home Assistant language is. Disable it any time via
-**OPNsense → ⚙ Configure → Create an OPNsense dashboard in the sidebar**.
+**Automatic** - on setup, the integration creates a polished **OPNsense**
+dashboard in the sidebar: glassmorphism hero, status chips, circular RAM/disk/CPU
+gauges, WAN throughput graph and top destinations. It is built from your **real
+entity IDs**, so it works whatever your Home Assistant language is. Disable it
+any time via **OPNsense → ⚙ Configure → Create an OPNsense dashboard in the
+sidebar**.
 
-> Your edits are preserved: the integration only seeds the default layout once
-> and never overwrites a dashboard you have customised.
+### Frontend prerequisites (HACS Lovelace cards)
 
-A manual fallback (for a second copy or a custom build) is also provided in
-[`dashboards/opnsense.yaml`](dashboards/opnsense.yaml) - paste it via
-**Settings → Dashboards → ⋮ → New dashboard → from scratch → Raw configuration
-editor**. Adjust the `sensor.opnsense_*` entity IDs to match your instance
-(they depend on your HA language).
+The default dashboard uses these custom cards - install them from **HACS →
+Frontend** (one-time) for the intended look:
+
+| Card | HACS name |
+|---|---|
+| Mushroom | `Mushroom` |
+| ApexCharts Card | `apexcharts-card` |
+| Mini Graph Card | `mini-graph-card` |
+| card-mod | `card-mod` |
+| Stack In Card | `stack-in-card` |
+
+If a card is missing, the integration logs a warning (filter `opnsense_custom`)
+and that card renders as "Custom element doesn't exist" - install it and reload.
+
+> **Managed dashboard.** The layout is refreshed when the integration ships a
+> new template version, so manual edits to it may be overwritten on upgrade. To
+> customise freely, turn the option off and duplicate the dashboard, or start
+> from [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml).
 
 ---
 
