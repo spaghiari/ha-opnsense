@@ -139,11 +139,12 @@ clé/secret et l'intégration se recharge. Vous pouvez aussi utiliser
 
 ---
 
-## 🖥️ Dashboard prêt à l'emploi (Glass NOC)
+## 🖥️ Dashboard prêt à l'emploi (Nocturne)
 
 **Automatique** - à l'installation, l'intégration crée un dashboard **OPNsense**
-soigné dans la barre latérale : hero glassmorphism, chips d'état, jauges
-circulaires RAM/disque/CPU, graphe de débit WAN et top destinations. Il est
+soigné dans la barre latérale : bandeau d'état qui vire au rouge si le WAN
+tombe, tuiles débit/CPU/RAM avec sparkline, courbe de trafic WAN sur 24 h,
+barre de remplissage disque et top destinations classées avec barres au prorata. Il est
 construit à partir de tes **vrais entity_id**, donc il fonctionne quelle que
 soit la langue de ton Home Assistant. Désactivable à tout moment via
 **OPNsense → ⚙ Configurer → Créer un dashboard OPNsense dans la barre latérale**.
@@ -159,7 +160,6 @@ Le dashboard par défaut utilise ces cartes custom - installe-les depuis
 | ApexCharts Card | `apexcharts-card` |
 | Mini Graph Card | `mini-graph-card` |
 | card-mod | `card-mod` |
-| Stack In Card | `stack-in-card` |
 
 Si une carte manque, l'intégration loggue un avertissement (filtre
 `opnsense_custom`) et la carte s'affiche en « Custom element doesn't exist » -

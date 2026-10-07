@@ -137,11 +137,12 @@ integration reloads. You can also use **⋮ → Reconfigure** to change host/por
 
 ---
 
-## 🖥️ Ready-made dashboard (Glass NOC)
+## 🖥️ Ready-made dashboard (Nocturne)
 
 **Automatic** - on setup, the integration creates a polished **OPNsense**
-dashboard in the sidebar: glassmorphism hero, status chips, circular RAM/disk/CPU
-gauges, WAN throughput graph and top destinations. It is built from your **real
+dashboard in the sidebar: a status banner that turns red when the WAN drops,
+throughput/CPU/RAM tiles with sparklines, a 24 h WAN traffic chart, a disk bar
+and ranked top destinations with proportional bars. It is built from your **real
 entity IDs**, so it works whatever your Home Assistant language is. Disable it
 any time via **OPNsense → ⚙ Configure → Create an OPNsense dashboard in the
 sidebar**.
@@ -157,7 +158,6 @@ Frontend** (one-time) for the intended look:
 | ApexCharts Card | `apexcharts-card` |
 | Mini Graph Card | `mini-graph-card` |
 | card-mod | `card-mod` |
-| Stack In Card | `stack-in-card` |
 
 If a card is missing, the integration logs a warning (filter `opnsense_custom`)
 and that card renders as "Custom element doesn't exist" - install it and reload.
