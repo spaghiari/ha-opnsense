@@ -147,10 +147,11 @@ clé/secret et l'intégration se recharge. Vous pouvez aussi utiliser
 
 ---
 
-## 🖥️ Dashboard prêt à l'emploi (Nocturne)
+## 🖥️ Dashboard prêt à l'emploi (Console)
 
 **Automatique** - à l'installation, l'intégration crée un dashboard **OPNsense**
-soigné dans la barre latérale : bandeau d'état qui vire au rouge si le WAN
+façon pupitre de supervision dans la barre latérale (panneaux graphite,
+chiffres en monospace, accent orange OPNsense) : bandeau d'état qui vire au rouge si le WAN
 tombe, tuiles débit/CPU/RAM avec sparkline, courbe de trafic WAN sur 24 h,
 latence/pertes et santé des services, tableau des tunnels VPN, barre de
 remplissage disque et top destinations classées avec barres au prorata. Chaque

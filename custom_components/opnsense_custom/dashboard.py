@@ -1,17 +1,23 @@
-"""Création automatique du dashboard OPNsense (design "Nocturne") en sidebar.
+"""Création automatique du dashboard OPNsense (design "Console") en sidebar.
 
 Conçu pour être "plug and play" : à l'installation, l'intégration pose un
-dashboard soigné (bandeau d'état, tuiles à sparkline, trafic 24 h, top
-destinations en barres) dans le menu de gauche de Home Assistant.
+dashboard façon pupitre de supervision (bandeau d'état, tuiles à sparkline,
+trafic 24 h, connexion, tunnels VPN, top destinations) dans le menu de gauche
+de Home Assistant.
+
+Direction visuelle "Console" : fond graphite, panneaux plats à angles nets,
+bande latérale colorée selon l'état, chiffres en monospace et accent orange
+OPNsense. Entrant = orange, sortant = bleu glacier (paire complémentaire,
+lisible par les daltoniens) ; un état n'est jamais porté par la seule couleur
+(toujours doublé d'un texte ou d'une icône).
 
 Points clés :
   * Cartes construites à partir des VRAIS entity_id lus dans le registre
     (via le suffixe d'unique_id) -> indépendant de la langue de l'UI.
   * Seules des entités activées par défaut sont utilisées (les capteurs
     disque total/utilisé/disponible, désactivés d'office, sont évités).
-  * Design premium via cartes HACS : Mushroom, apexcharts-card,
-    mini-graph-card et card-mod. Si elles manquent, un avertissement est
-    loggé (cf. README -> prérequis frontend).
+  * Cartes HACS : Mushroom, apexcharts-card, mini-graph-card et card-mod.
+    Si elles manquent, un avertissement est loggé (cf. README).
   * Best-effort et défensif : toute erreur est loggée et n'interrompt JAMAIS
     le chargement de l'intégration (l'API lovelace utilisée est semi-privée).
   * Géré par l'intégration : le gabarit est re-semé quand
@@ -47,25 +53,63 @@ REQUIRED_RESOURCES = (
 
 # Nombre de lignes affichées par liste "top destinations" (attribut top_5).
 TOP_ROWS = 5
+# Emplacements de tunnels VPN affichés (les vides sont masqués).
+TUNNEL_SLOTS = 8
 
-# Styles card-mod réutilisés.
-_GLASS = (
-    "ha-card { border-radius: 20px; background: rgba(15,23,42,0.55); "
-    "border: 1px solid rgba(148,163,184,0.12); "
-    "box-shadow: 0 8px 24px rgba(0,0,0,0.35); "
-    "backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }"
+# ---- Tokens de la direction "Console" ----
+_INK = "#0A0B0D"          # fond de page
+_PANEL = "#131518"        # surface des cartes
+_LINE = "rgba(255,255,255,0.07)"
+_TEXT = "#ECE7E1"         # blanc chaud
+_MUTED = "#8C8A86"
+_ORANGE = "#F26722"       # orange OPNsense - accent + trafic entrant
+_ICE = "#8FD3F4"          # bleu glacier - trafic sortant
+_OK = "#3DD68C"
+_WARN = "#F5B83D"
+_BAD = "#FF5A4E"
+_MONO = ("ui-monospace, 'JetBrains Mono', 'Cascadia Mono', 'SF Mono', "
+         "Consolas, monospace")
+
+# Panneau plat : angles nets, filet 1 px, pas de flou ni d'ombre portée.
+_PANEL_CSS = (
+    "ha-card { background: " + _PANEL + "; border: 1px solid " + _LINE + "; "
+    "border-radius: 10px; box-shadow: none; "
+    "--primary-text-color: " + _TEXT + "; "
+    "--secondary-text-color: " + _MUTED + "; } "
 )
-_HEADING = (
+_HEADING_CSS = (
     "ha-card { background: none; border: none; box-shadow: none; } "
-    ".title { text-transform: uppercase; letter-spacing: 1.4px; "
-    "font-size: 12px !important; font-weight: 700; opacity: 0.75; }"
+    ".title { font-family: " + _MONO + "; text-transform: uppercase; "
+    "letter-spacing: 2px; font-size: 11px !important; font-weight: 600; "
+    "color: " + _MUTED + " !important; } "
+    "ha-icon, ha-state-icon { color: " + _ORANGE + " !important; "
+    "--mdc-icon-size: 16px; }"
 )
-_KPI = (
-    " .state__value { font-weight: 800; } .header .name { opacity: 0.7; "
-    "text-transform: uppercase; letter-spacing: 1px; font-size: 11px; }"
+_KPI_CSS = (
+    ".state__value { font-family: " + _MONO + "; font-weight: 700; "
+    "letter-spacing: -0.5px; } .state__uom { font-family: " + _MONO + "; "
+    "opacity: 0.6; } .header .name { font-family: " + _MONO + "; "
+    "text-transform: uppercase; letter-spacing: 1.5px; font-size: 10.5px; "
+    "color: " + _MUTED + "; } .header .icon { color: " + _MUTED + "; }"
 )
-# Couleurs d'accent (RGB) des barres "top destinations".
-_ACCENT_RGB = {"blue": "56,189,248", "purple": "167,139,250"}
+_MONO_TEXT = (
+    ".primary, .secondary { font-family: " + _MONO + "; "
+    "font-variant-numeric: tabular-nums; } "
+)
+
+
+def _stripe(color: str) -> str:
+    """Bande latérale d'état (couleur littérale ou expression Jinja)."""
+    return "ha-card { box-shadow: inset 3px 0 0 " + color + "; } "
+
+
+def _icon(color: str) -> str:
+    """Couleur d'icône Mushroom en hex (icon_color n'accepte que des noms)."""
+    return (
+        "mushroom-shape-icon { --icon-color: " + color + " !important; "
+        "--shape-color: color-mix(in srgb, " + color + " 14%, transparent) "
+        "!important; } "
+    )
 
 
 def _entity_map(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, str]:
@@ -80,9 +124,9 @@ def _entity_map(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, str]:
 
 
 def _heading(title: str, icon: str) -> dict:
-    """Titre de section discret (majuscules espacées)."""
+    """Titre de section : petites capitales monospace, icône orange."""
     return {"type": "heading", "heading": title, "icon": icon,
-            "card_mod": {"style": _HEADING}}
+            "card_mod": {"style": _HEADING_CSS}}
 
 
 def _kpi(entity: str, name: str, icon: str, color: str, columns: int,
@@ -92,16 +136,30 @@ def _kpi(entity: str, name: str, icon: str, color: str, columns: int,
         "type": "custom:mini-graph-card",
         "entities": [{"entity": entity, "color": color}],
         "name": name, "icon": icon,
-        "hours_to_show": 6, "points_per_hour": 12, "line_width": 3,
-        "height": 70, "decimals": decimals, "animate": True,
+        "hours_to_show": 6, "points_per_hour": 12, "line_width": 2,
+        "height": 64, "decimals": decimals, "animate": True,
         "show": {"fill": "fade", "labels": False, "extrema": False,
                  "legend": False, "points": False},
         "grid_options": {"columns": columns},
-        "card_mod": {"style": _GLASS + _KPI},
+        "card_mod": {"style": _PANEL_CSS + _KPI_CSS},
     }
 
 
-def _top_list(entity: str, accent: str, icon: str, title: str) -> dict:
+def _template_card(primary: str, secondary: str, icon: str, color: str,
+                   **extra: Any) -> dict:
+    """Carte Mushroom au style Console (bande + icône colorées)."""
+    style = extra.pop("style", "")
+    card = {
+        "type": "custom:mushroom-template-card",
+        "primary": primary, "secondary": secondary, "icon": icon,
+        "card_mod": {"style": _PANEL_CSS + _stripe(color) + _icon(color)
+                     + _MONO_TEXT + style},
+    }
+    card.update(extra)
+    return card
+
+
+def _top_list(entity: str, color: str, icon: str, title: str) -> dict:
     """Classement top destinations : une ligne par rang, barre au prorata.
 
     La largeur de la barre est relative au débit du n°1 (card-mod accepte
@@ -109,7 +167,7 @@ def _top_list(entity: str, accent: str, icon: str, title: str) -> dict:
     """
     rows: list[dict[str, Any]] = [{
         "type": "heading", "heading": title, "heading_style": "subtitle",
-        "icon": icon,
+        "icon": icon, "card_mod": {"style": _HEADING_CSS},
     }]
     top = "(state_attr('" + entity + "','top_5') or [])"
     for i in range(TOP_ROWS):
@@ -120,7 +178,7 @@ def _top_list(entity: str, accent: str, icon: str, title: str) -> dict:
         pct = "{{ ((d.rate_bps / mx * 100) if d and mx else 0) | round(1) }}%"
         rows.append({
             "type": "custom:mushroom-template-card",
-            "primary": pick + "{{ d.name if d else '' }}",
+            "primary": pick + "{{ d.name if d else '-' }}",
             "secondary": pick + (
                 "{% if d %}{% set r = d.rate_bps %}"
                 "{{ (r / 1000000) | round(1) ~ ' Mbit/s' if r >= 1000000 "
@@ -128,25 +186,50 @@ def _top_list(entity: str, accent: str, icon: str, title: str) -> dict:
                 "{% if d.name != d.address %}  ·  {{ d.address }}{% endif %}"
                 "{% endif %}"
             ),
-            "icon": f"mdi:numeric-{i + 1}-circle",
-            "icon_color": accent,
-            "card_mod": {"style": pick + peak + (
-                "ha-card { border-radius: 14px; box-shadow: none; "
-                "border: 1px solid rgba(148,163,184,0.10); "
-                "background: linear-gradient(90deg, rgba("
-                + _ACCENT_RGB[accent] + ",0.28) " + pct
-                + ", rgba(15,23,42,0.45) " + pct + "); } "
-                ".primary { font-size: 13px !important; white-space: nowrap; "
-                "overflow: hidden; text-overflow: ellipsis; } "
-                ".secondary { font-variant-numeric: tabular-nums; }"
+            "icon": f"mdi:numeric-{i + 1}",
+            "card_mod": {"style": pick + peak + _MONO_TEXT + _icon(color) + (
+                "ha-card { border-radius: 8px; box-shadow: none; "
+                "border: 1px solid " + _LINE + "; "
+                "--primary-text-color: " + _TEXT + "; "
+                "--secondary-text-color: " + _MUTED + "; "
+                "background: linear-gradient(90deg, color-mix(in srgb, "
+                + color + " 22%, " + _PANEL + ") " + pct + ", " + _PANEL
+                + " " + pct + "); } "
+                ".primary { font-size: 12.5px !important; white-space: nowrap; "
+                "overflow: hidden; text-overflow: ellipsis; }"
             )},
         })
     return {"type": "vertical-stack", "cards": rows,
             "grid_options": {"columns": 12}}
 
 
+def _tunnel_column(entity: str, slots: range) -> dict:
+    """Colonne de tunnels VPN : une ligne par tunnel, vides masquées."""
+    cards = []
+    for i in slots:
+        pick = ("{% set t = state_attr('" + entity + "','tunnels') or [] %}"
+                "{% set x = t[" + str(i) + "] if t | count > " + str(i)
+                + " else none %}")
+        state_color = ("{{ '" + _OK + "' if x and x.up else '" + _BAD + "' }}")
+        cards.append({
+            "type": "custom:mushroom-template-card",
+            "primary": pick + "{{ x.name if x else '' }}",
+            "secondary": pick + (
+                "{% if x %}{{ 'En ligne' if x.up else 'Coupé' }} · {{ x.kind }}"
+                " · {{ x.address or '-' }}"
+                "{% if x.remote %} → {{ x.remote }}{% endif %}{% endif %}"
+            ),
+            "icon": pick + "{{ 'mdi:lock' if x and x.up else 'mdi:lock-off' }}",
+            "card_mod": {"style": pick + _PANEL_CSS + _MONO_TEXT
+                         + _stripe(state_color) + _icon(state_color)
+                         + "{% if not x %}:host { display: none; }{% endif %}"},
+        })
+    return {"type": "vertical-stack", "cards": cards,
+            "grid_options": {"columns": 12}}
+
+
 def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
-    """Construit la config lovelace (design Nocturne) depuis les entités réelles."""
+    """Construit la config lovelace (design Console) depuis les entités réelles."""
     e = _entity_map(hass, entry)
 
     def s(key: str) -> str:
@@ -165,201 +248,180 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "{{ (p[0].split(' ')[0] ~ ' j ') if p | count > 1 else '' }}"
         "{{ hms[0] | int }} h {{ hms[1] }}{% else %}-{% endif %}"
     )
-
     # Latence WAN si mesurée (privilège optionnel "Status: Gateways").
     latency = (
         "{% set ms = states('" + s("wan_latency") + "') %}"
-        "{{ ' · ' ~ (ms | float | round(1)) ~ ' ms' if is_number(ms) else '' }}"
+        "{{ '  ·  ' ~ (ms | float | round(1)) ~ ' ms' if is_number(ms) else '' }}"
     )
 
-    # ---- Bandeau d'état : vire au rouge si le WAN tombe ----
-    # Tailles via les variables Mushroom (--card-*) : surcharger font-size
-    # sans line-height décentrait verticalement le texte par rapport à l'icône.
+    # ---- Bandeau d'état : bande + voyant verts, rouges si le WAN tombe ----
     hero = {
         "type": "custom:mushroom-template-card",
-        "primary": "{{ states('" + s("hostname") + "').split('.')[0] | upper }}",
+        "primary": (
+            "{{ states('" + s("hostname") + "').split('.')[0] | upper }}"
+        ),
         "secondary": (
-            wan_on("En ligne", "WAN coupé") + latency
+            wan_on("● EN LIGNE", "● WAN COUPÉ") + latency
             + "  ·  OPNsense {{ states('" + s("opnsense_version")
             + "').split('-')[0] }}  ·  {{ states('" + s("public_ipv4")
-            + "') }}  ·  depuis " + uptime
+            + "') }}  ·  up " + uptime
         ),
         "icon": "mdi:shield-lock",
-        "icon_color": wan_on("teal", "red"),
         "tap_action": {"action": "more-info", "entity": wan},
         "grid_options": {"columns": "full"},
         "card_mod": {"style": (
-            "ha-card { --card-primary-font-size: 20px; "
-            "--card-primary-line-height: 26px; --card-primary-font-weight: 800; "
-            "--card-primary-letter-spacing: 1.5px; "
-            "--card-secondary-font-size: 13px; "
+            _PANEL_CSS + _MONO_TEXT + _icon(wan_on(_OK, _BAD))
+            + "ha-card { --card-primary-font-size: 22px; "
+            "--card-primary-line-height: 28px; --card-primary-font-weight: 700; "
+            "--card-primary-letter-spacing: 3px; "
+            "--card-secondary-font-size: 12.5px; "
             "--card-secondary-line-height: 18px; --icon-size: 48px; "
-            "border-radius: 24px; border: 1px solid "
-            + wan_on("rgba(45,212,191,0.35)", "rgba(248,113,113,0.5)") + "; "
-            "background: radial-gradient(120% 140% at 0% 0%, "
-            + wan_on("rgba(20,184,166,0.30)", "rgba(239,68,68,0.30)")
-            + " 0%, rgba(15,23,42,0.80) 55%); box-shadow: 0 0 32px "
-            + wan_on("rgba(45,212,191,0.18)", "rgba(239,68,68,0.25)")
-            + ", 0 10px 30px rgba(0,0,0,0.45); backdrop-filter: blur(16px); } "
-            ".secondary { font-variant-numeric: tabular-nums; opacity: 0.85; }"
+            "box-shadow: inset 4px 0 0 " + wan_on(_OK, _BAD) + "; "
+            "background: radial-gradient(140% 220% at 0% 0%, "
+            "color-mix(in srgb, " + _ORANGE + " 16%, transparent) 0%, "
+            "transparent 55%), " + _PANEL + "; } "
+            ".secondary { color: " + wan_on(_OK, _BAD) + " !important; "
+            "letter-spacing: 0.5px; }"
         )},
     }
 
     # ---- Trafic : tuiles temps réel + courbe 24 h ----
     def serie(entity: str, name: str, color: str) -> dict:
         return {"entity": entity, "name": name, "type": "area",
-                "color": color, "stroke_width": 2, "opacity": 0.25,
+                "color": color, "stroke_width": 2, "opacity": 0.18,
                 "group_by": {"func": "avg", "duration": "10min"}}
 
     traffic_chart = {
         "type": "custom:apexcharts-card", "graph_span": "24h",
-        "header": {"show": True, "title": "Trafic WAN · 24 h"},
-        "series": [serie(s("wan_throughput_in"), "Entrant", "#38bdf8"),
-                   serie(s("wan_throughput_out"), "Sortant", "#a78bfa")],
+        "header": {"show": True, "title": "TRAFIC WAN · 24 H"},
+        "series": [serie(s("wan_throughput_in"), "Entrant", _ORANGE),
+                   serie(s("wan_throughput_out"), "Sortant", _ICE)],
         "apex_config": {
-            "chart": {"height": 230},
+            "chart": {"height": 220, "fontFamily": _MONO,
+                      "foreColor": _MUTED},
             "legend": {"show": True, "position": "top",
                        "horizontalAlign": "right"},
-            "grid": {"borderColor": "rgba(148,163,184,0.10)",
-                     "strokeDashArray": 4},
+            "grid": {"borderColor": _LINE, "strokeDashArray": 3},
             "yaxis": {"decimalsInFloat": 1, "title": {"text": "Mbit/s"}},
             "tooltip": {"theme": "dark"}, "stroke": {"curve": "smooth"},
             "dataLabels": {"enabled": False},
         },
         "grid_options": {"columns": "full"},
-        "card_mod": {"style": _GLASS},
+        "card_mod": {"style": _PANEL_CSS + (
+            ".header #header__title { font-family: " + _MONO + "; "
+            "letter-spacing: 2px; font-size: 11px; color: " + _MUTED + "; }"
+        )},
     }
     traffic = {"type": "grid", "column_span": 2, "cards": [
         _heading("Trafic", "mdi:swap-vertical"),
-        _kpi(s("wan_throughput_in"), "Entrant", "mdi:arrow-down-bold",
-             "#38bdf8", 12, 2),
-        _kpi(s("wan_throughput_out"), "Sortant", "mdi:arrow-up-bold",
-             "#a78bfa", 12, 2),
+        _kpi(s("wan_throughput_in"), "Entrant", "mdi:arrow-down",
+             _ORANGE, 12, 2),
+        _kpi(s("wan_throughput_out"), "Sortant", "mdi:arrow-up",
+             _ICE, 12, 2),
         traffic_chart,
+    ]}
+
+    # ---- Connexion : latence / pertes (dpinger) + services ----
+    services = s("services_stopped")
+    n = "{% set n = states('" + services + "') %}"
+    svc_color = (n + "{{ '" + _MUTED + "' if not is_number(n) else ('" + _OK
+                 + "' if n | int == 0 else '" + _BAD + "') }}")
+    connection = {"type": "grid", "cards": [
+        _heading("Connexion", "mdi:pulse"),
+        _kpi(s("wan_latency"), "Latence", "mdi:timer-outline", _ORANGE, 6, 1),
+        _kpi(s("wan_packet_loss"), "Pertes", "mdi:chart-bell-curve", _ICE,
+             6, 1),
+        _template_card(
+            "Services",
+            n + "{% if not is_number(n) %}Droits API manquants (Status: "
+            "Services){% elif n | int == 0 %}Tous actifs · {{ state_attr('"
+            + services + "','running') }} services{% else %}{{ n }} arrêté(s)"
+            " : {{ (state_attr('" + services + "','stopped') or [])"
+            " | join(', ') }}{% endif %}",
+            n + "{{ 'mdi:cog-outline' if is_number(n) and n | int == 0 "
+            "else 'mdi:cog-off-outline' }}",
+            svc_color,
+            multiline_secondary=True,
+            tap_action={"action": "more-info", "entity": services},
+            grid_options={"columns": 12},
+        ),
     ]}
 
     # ---- Système : CPU / RAM, disque en barre, firmware ----
     disk_pct = "states('" + s("disk_root_percent") + "') | float(0)"
-    disk = {
-        "type": "custom:mushroom-template-card", "primary": "Disque /",
-        "secondary": "{{ " + disk_pct + " | round(0) | int }} % utilisé",
-        "icon": "mdi:harddisk",
-        "icon_color": ("{{ 'red' if " + disk_pct + " > 90 else ('amber' if "
-                       + disk_pct + " > 75 else 'teal') }}"),
-        "tap_action": {"action": "more-info", "entity": s("disk_root_percent")},
-        "grid_options": {"columns": 12},
-        "card_mod": {"style": (
-            "{% set p = " + disk_pct + " %}ha-card { border-radius: 20px; "
-            "border: 1px solid rgba(148,163,184,0.12); "
-            "background: linear-gradient(90deg, rgba(45,212,191,0.30) {{ p }}%, "
-            "rgba(15,23,42,0.55) {{ p }}%); "
-            "box-shadow: 0 8px 24px rgba(0,0,0,0.35); }"
-        )},
-    }
-    firmware = {
-        "type": "custom:mushroom-template-card", "primary": "Firmware",
-        "secondary": (
-            "{{ 'Mise à jour ' ~ states('" + s("firmware_latest")
-            + "') ~ ' disponible' if is_state('" + upd + "','on') "
-            "else 'À jour · ' ~ states('" + s("firmware_installed") + "') }}"
+    disk_color = ("{{ '" + _BAD + "' if " + disk_pct + " > 90 else ('" + _WARN
+                  + "' if " + disk_pct + " > 75 else '" + _ORANGE + "') }}")
+    disk = _template_card(
+        "Disque /",
+        "{{ " + disk_pct + " | round(0) | int }} % utilisé",
+        "mdi:harddisk", disk_color,
+        tap_action={"action": "more-info", "entity": s("disk_root_percent")},
+        grid_options={"columns": 12},
+        style=(
+            "{% set p = " + disk_pct + " %}ha-card { background: "
+            "linear-gradient(90deg, color-mix(in srgb, " + disk_color
+            + " 20%, " + _PANEL + ") {{ p }}%, " + _PANEL + " {{ p }}%); }"
         ),
-        "icon": ("{{ 'mdi:package-up' if is_state('" + upd + "','on') "
-                 "else 'mdi:package-variant-closed-check' }}"),
-        "icon_color": "{{ 'amber' if is_state('" + upd + "','on') else 'green' }}",
-        "tap_action": {"action": "more-info", "entity": s("firmware_update")},
-        "hold_action": {"action": "perform-action",
-                        "perform_action": "button.press",
-                        "target": {"entity_id": s("check_updates")}},
-        "grid_options": {"columns": 12},
-        "card_mod": {"style": _GLASS},
-    }
+    )
+    upd_on = "is_state('" + upd + "','on')"
+    firmware = _template_card(
+        "Firmware",
+        "{{ 'Mise à jour ' ~ states('" + s("firmware_latest") + "') ~ "
+        "' disponible' if " + upd_on + " else 'À jour · ' ~ states('"
+        + s("firmware_installed") + "') }}",
+        "{{ 'mdi:package-up' if " + upd_on + " else "
+        "'mdi:package-variant-closed-check' }}",
+        "{{ '" + _WARN + "' if " + upd_on + " else '" + _OK + "' }}",
+        tap_action={"action": "more-info", "entity": s("firmware_update")},
+        hold_action={"action": "perform-action",
+                     "perform_action": "button.press",
+                     "target": {"entity_id": s("check_updates")}},
+        grid_options={"columns": 12},
+    )
     system = {"type": "grid", "cards": [
         _heading("Système", "mdi:chip"),
-        _kpi(s("loadavg_1"), "Charge CPU", "mdi:cpu-64-bit", "#2dd4bf", 6, 2),
-        _kpi(s("ram_used_percent"), "RAM", "mdi:memory", "#818cf8", 6, 0),
+        _kpi(s("loadavg_1"), "Charge CPU", "mdi:cpu-64-bit", _ORANGE, 6, 2),
+        _kpi(s("ram_used_percent"), "RAM", "mdi:memory", _ICE, 6, 0),
         disk, firmware,
     ]}
 
     # ---- Top destinations ----
     top = {"type": "grid", "column_span": 2, "cards": [
-        _heading("Top destinations", "mdi:trophy-outline"),
-        _top_list(s("wan_top_dest_in"), "blue", "mdi:arrow-down-bold",
-                  "Entrant"),
-        _top_list(s("wan_top_dest_out"), "purple", "mdi:arrow-up-bold",
-                  "Sortant"),
-    ]}
-
-    # ---- WAN : compteurs + adresses publiques ----
-    def total(entity: str, name: str, icon: str, color: str) -> dict:
-        return {
-            "type": "custom:mushroom-template-card",
-            "primary": "{{ states('" + entity + "') | float(0) | round(1) }} Go",
-            "secondary": name, "icon": icon, "icon_color": color,
-            "tap_action": {"action": "more-info", "entity": entity},
-            "grid_options": {"columns": 6},
-            "card_mod": {"style": _GLASS + " .primary { font-variant-numeric: "
-                         "tabular-nums; font-weight: 800 !important; }"},
-        }
-
-    wan_section = {"type": "grid", "cards": [
-        _heading("WAN", "mdi:wan"),
-        total(s("wan_total_received"), "Reçu", "mdi:cloud-download", "blue"),
-        total(s("wan_total_transmitted"), "Transmis", "mdi:cloud-upload",
-              "purple"),
-        {"type": "custom:mushroom-template-card",
-         "primary": "{{ states('" + s("public_ipv4") + "') }}",
-         "secondary": "{{ states('" + s("public_ipv6") + "') }}",
-         "icon": "mdi:ip-network", "icon_color": "cyan",
-         "multiline_secondary": True, "grid_options": {"columns": 12},
-         "card_mod": {"style": _GLASS + " .primary, .secondary { "
-                      "font-family: ui-monospace, monospace; }"}},
-    ]}
-
-    # ---- Connexion : latence / pertes (dpinger) + services ----
-    services = s("services_stopped")
-    svc_count = "states('" + services + "')"
-    connection = {"type": "grid", "cards": [
-        _heading("Connexion", "mdi:pulse"),
-        _kpi(s("wan_latency"), "Latence", "mdi:timer-outline", "#f472b6", 6, 1),
-        _kpi(s("wan_packet_loss"), "Pertes", "mdi:package-variant-remove",
-             "#fb923c", 6, 1),
-        {"type": "custom:mushroom-template-card", "primary": "Services",
-         "secondary": (
-             "{% set n = " + svc_count + " %}"
-             "{% if not is_number(n) %}Droits API manquants (Status: Services)"
-             "{% elif n | int == 0 %}Tous actifs · {{ state_attr('" + services
-             + "','running') }} services"
-             "{% else %}{{ n }} arrêté(s) : {{ (state_attr('" + services
-             + "','stopped') or []) | join(', ') }}{% endif %}"
-         ),
-         "icon": "mdi:cogs",
-         "icon_color": (
-             "{% set n = " + svc_count + " %}{{ 'grey' if not is_number(n) "
-             "else ('green' if n | int == 0 else 'red') }}"
-         ),
-         "multiline_secondary": True,
-         "tap_action": {"action": "more-info", "entity": services},
-         "grid_options": {"columns": 12},
-         "card_mod": {"style": _GLASS}},
+        _heading("Top destinations", "mdi:podium"),
+        _top_list(s("wan_top_dest_in"), _ORANGE, "mdi:arrow-down", "Entrant"),
+        _top_list(s("wan_top_dest_out"), _ICE, "mdi:arrow-up", "Sortant"),
     ]}
 
     # ---- Tunnels VPN (déduits des interfaces, sans privilège en plus) ----
     tunnels = s("vpn_tunnels_up")
     vpn = {"type": "grid", "column_span": 2, "cards": [
-        _heading("Tunnels VPN", "mdi:vpn"),
-        {"type": "markdown",
-         "content": (
-             "{% set t = state_attr('" + tunnels + "','tunnels') or [] %}"
-             "{% if t %}| | Tunnel | Type | Adresse | Distant |\n"
-             "|:-:|---|---|---|---|\n"
-             "{% for x in t %}| {{ '🟢' if x.up else '🔴' }} | **{{ x.name }}** "
-             "| {{ x.kind }} | `{{ x.address or '-' }}` "
-             "| {{ x.remote or '-' }} |\n{% endfor %}"
-             "{% else %}*Aucun tunnel WireGuard, IPsec ou OpenVPN détecté.*"
-             "{% endif %}"
-         ),
-         "grid_options": {"columns": "full"},
-         "card_mod": {"style": _GLASS + " ha-card { padding: 4px 8px; }"}},
+        {**_heading("Tunnels VPN", "mdi:vpn"),
+         "badges": [{"type": "entity", "entity": tunnels, "show_state": True,
+                     "show_icon": False}]},
+        _tunnel_column(tunnels, range(0, TUNNEL_SLOTS, 2)),
+        _tunnel_column(tunnels, range(1, TUNNEL_SLOTS, 2)),
+    ]}
+
+    # ---- WAN : compteurs + adresses publiques ----
+    def total(entity: str, name: str, icon: str, color: str) -> dict:
+        return _template_card(
+            "{{ states('" + entity + "') | float(0) | round(1) }} Go",
+            name, icon, color,
+            tap_action={"action": "more-info", "entity": entity},
+            grid_options={"columns": 6},
+            style=".primary { font-weight: 700 !important; }",
+        )
+
+    wan_section = {"type": "grid", "cards": [
+        _heading("WAN", "mdi:wan"),
+        total(s("wan_total_received"), "Reçu", "mdi:arrow-down", _ORANGE),
+        total(s("wan_total_transmitted"), "Transmis", "mdi:arrow-up", _ICE),
+        _template_card(
+            "{{ states('" + s("public_ipv4") + "') }}",
+            "{{ states('" + s("public_ipv6") + "') }}",
+            "mdi:ip-network", _MUTED,
+            multiline_secondary=True, grid_options={"columns": 12},
+        ),
     ]}
 
     return {
@@ -368,6 +430,12 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "views": [{
             "title": "Pare-feu", "path": "pare-feu", "type": "sections",
             "max_columns": 3,
+            # Fond graphite + halo orange discret en haut à gauche.
+            "background": (
+                "radial-gradient(1200px 520px at 0% 0%, color-mix(in srgb, "
+                + _ORANGE + " 9%, transparent), transparent 70%) fixed, "
+                + _INK
+            ),
             "sections": [
                 {"type": "grid", "column_span": 3, "cards": [hero]},
                 traffic, connection, top, system, vpn, wan_section,

@@ -145,10 +145,11 @@ integration reloads. You can also use **⋮ → Reconfigure** to change host/por
 
 ---
 
-## 🖥️ Ready-made dashboard (Nocturne)
+## 🖥️ Ready-made dashboard (Console)
 
 **Automatic** - on setup, the integration creates a polished **OPNsense**
-dashboard in the sidebar: a status banner that turns red when the WAN drops,
+dashboard in the sidebar, styled like a monitoring console (graphite panels,
+monospace figures, OPNsense orange accent): a status banner that turns red when the WAN drops,
 throughput/CPU/RAM tiles with sparklines, a 24 h WAN traffic chart, latency/loss
 and services health, a VPN tunnels table, a disk bar and ranked top destinations
 with proportional bars. Each firewall gets its own dashboard (`opnsense`,
