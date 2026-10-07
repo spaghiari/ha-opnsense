@@ -16,12 +16,13 @@ CONF_WAN_INTERFACE = "wan_interface"
 # Crée automatiquement un dashboard "OPNsense" dans la barre latérale.
 CONF_CREATE_DASHBOARD = "create_dashboard"
 DEFAULT_CREATE_DASHBOARD = True
-# url_path de base du dashboard auto-généré (suffixé si plusieurs firewalls).
+# url_path de base du dashboard auto-généré (suffixé "-2", "-3"... pour les
+# firewalls suivants).
 DASHBOARD_URL_PATH = "opnsense"
 # Version du gabarit de dashboard. Incrémenter pour re-semer le design
 # par défaut au prochain chargement (les éditions manuelles seront alors
 # remplacées - le dashboard auto est "géré" par l'intégration).
-DASHBOARD_TEMPLATE_VERSION = 3
+DASHBOARD_TEMPLATE_VERSION = 4
 
 # Valeurs par défaut
 DEFAULT_PORT = 443

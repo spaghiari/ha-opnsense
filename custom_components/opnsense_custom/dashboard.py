@@ -166,12 +166,20 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "{{ hms[0] | int }} h {{ hms[1] }}{% else %}-{% endif %}"
     )
 
+    # Latence WAN si mesurée (privilège optionnel "Status: Gateways").
+    latency = (
+        "{% set ms = states('" + s("wan_latency") + "') %}"
+        "{{ ' · ' ~ (ms | float | round(1)) ~ ' ms' if is_number(ms) else '' }}"
+    )
+
     # ---- Bandeau d'état : vire au rouge si le WAN tombe ----
+    # Tailles via les variables Mushroom (--card-*) : surcharger font-size
+    # sans line-height décentrait verticalement le texte par rapport à l'icône.
     hero = {
         "type": "custom:mushroom-template-card",
         "primary": "{{ states('" + s("hostname") + "').split('.')[0] | upper }}",
         "secondary": (
-            wan_on("En ligne", "WAN coupé")
+            wan_on("En ligne", "WAN coupé") + latency
             + "  ·  OPNsense {{ states('" + s("opnsense_version")
             + "').split('-')[0] }}  ·  {{ states('" + s("public_ipv4")
             + "') }}  ·  depuis " + uptime
@@ -181,18 +189,19 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "tap_action": {"action": "more-info", "entity": wan},
         "grid_options": {"columns": "full"},
         "card_mod": {"style": (
-            "ha-card { border-radius: 24px; padding: 10px 6px; "
-            "border: 1px solid "
+            "ha-card { --card-primary-font-size: 20px; "
+            "--card-primary-line-height: 26px; --card-primary-font-weight: 800; "
+            "--card-primary-letter-spacing: 1.5px; "
+            "--card-secondary-font-size: 13px; "
+            "--card-secondary-line-height: 18px; --icon-size: 48px; "
+            "border-radius: 24px; border: 1px solid "
             + wan_on("rgba(45,212,191,0.35)", "rgba(248,113,113,0.5)") + "; "
             "background: radial-gradient(120% 140% at 0% 0%, "
             + wan_on("rgba(20,184,166,0.30)", "rgba(239,68,68,0.30)")
             + " 0%, rgba(15,23,42,0.80) 55%); box-shadow: 0 0 32px "
             + wan_on("rgba(45,212,191,0.18)", "rgba(239,68,68,0.25)")
             + ", 0 10px 30px rgba(0,0,0,0.45); backdrop-filter: blur(16px); } "
-            ".primary { font-size: 20px !important; font-weight: 800 !important; "
-            "letter-spacing: 1.5px; } .secondary { font-variant-numeric: "
-            "tabular-nums; opacity: 0.85; font-size: 13px !important; } "
-            "ha-state-icon { --mdc-icon-size: 32px; }"
+            ".secondary { font-variant-numeric: tabular-nums; opacity: 0.85; }"
         )},
     }
 
@@ -306,6 +315,53 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
                       "font-family: ui-monospace, monospace; }"}},
     ]}
 
+    # ---- Connexion : latence / pertes (dpinger) + services ----
+    services = s("services_stopped")
+    svc_count = "states('" + services + "')"
+    connection = {"type": "grid", "cards": [
+        _heading("Connexion", "mdi:pulse"),
+        _kpi(s("wan_latency"), "Latence", "mdi:timer-outline", "#f472b6", 6, 1),
+        _kpi(s("wan_packet_loss"), "Pertes", "mdi:package-variant-remove",
+             "#fb923c", 6, 1),
+        {"type": "custom:mushroom-template-card", "primary": "Services",
+         "secondary": (
+             "{% set n = " + svc_count + " %}"
+             "{% if not is_number(n) %}Droits API manquants (Status: Services)"
+             "{% elif n | int == 0 %}Tous actifs · {{ state_attr('" + services
+             + "','running') }} services"
+             "{% else %}{{ n }} arrêté(s) : {{ (state_attr('" + services
+             + "','stopped') or []) | join(', ') }}{% endif %}"
+         ),
+         "icon": "mdi:cogs",
+         "icon_color": (
+             "{% set n = " + svc_count + " %}{{ 'grey' if not is_number(n) "
+             "else ('green' if n | int == 0 else 'red') }}"
+         ),
+         "multiline_secondary": True,
+         "tap_action": {"action": "more-info", "entity": services},
+         "grid_options": {"columns": 12},
+         "card_mod": {"style": _GLASS}},
+    ]}
+
+    # ---- Tunnels VPN (déduits des interfaces, sans privilège en plus) ----
+    tunnels = s("vpn_tunnels_up")
+    vpn = {"type": "grid", "column_span": 2, "cards": [
+        _heading("Tunnels VPN", "mdi:vpn"),
+        {"type": "markdown",
+         "content": (
+             "{% set t = state_attr('" + tunnels + "','tunnels') or [] %}"
+             "{% if t %}| | Tunnel | Type | Adresse | Distant |\n"
+             "|:-:|---|---|---|---|\n"
+             "{% for x in t %}| {{ '🟢' if x.up else '🔴' }} | **{{ x.name }}** "
+             "| {{ x.kind }} | `{{ x.address or '-' }}` "
+             "| {{ x.remote or '-' }} |\n{% endfor %}"
+             "{% else %}*Aucun tunnel WireGuard, IPsec ou OpenVPN détecté.*"
+             "{% endif %}"
+         ),
+         "grid_options": {"columns": "full"},
+         "card_mod": {"style": _GLASS + " ha-card { padding: 4px 8px; }"}},
+    ]}
+
     return {
         "title": "OPNsense",
         "template_version": DASHBOARD_TEMPLATE_VERSION,
@@ -314,7 +370,7 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
             "max_columns": 3,
             "sections": [
                 {"type": "grid", "column_span": 3, "cards": [hero]},
-                traffic, system, top, wan_section,
+                traffic, connection, top, system, vpn, wan_section,
             ],
         }],
     }
@@ -335,6 +391,19 @@ def _missing_resources(hass: HomeAssistant) -> list[str]:
         return [r for r in REQUIRED_RESOURCES if r not in urls]
     except Exception:  # noqa: BLE001
         return []
+
+
+def _dashboard_url(hass: HomeAssistant, entry: ConfigEntry) -> tuple[str, str]:
+    """url_path et titre du dashboard de CE firewall.
+
+    Le premier firewall configuré garde "opnsense" (rétro-compatible) ; les
+    suivants obtiennent "opnsense-2", "opnsense-3"... pour ne pas s'écraser.
+    """
+    entry_ids = [e.entry_id for e in hass.config_entries.async_entries(DOMAIN)]
+    rank = entry_ids.index(entry.entry_id) + 1 if entry.entry_id in entry_ids else 1
+    if rank == 1:
+        return DASHBOARD_URL_PATH, "OPNsense"
+    return f"{DASHBOARD_URL_PATH}-{rank}", f"OPNsense {rank}"
 
 
 async def async_register_dashboard(
@@ -369,9 +438,9 @@ async def async_register_dashboard(
                 ", ".join(missing),
             )
 
-        url_path = DASHBOARD_URL_PATH
+        url_path, title = _dashboard_url(hass, entry)
         item = {
-            "id": url_path, "url_path": url_path, "title": "OPNsense",
+            "id": url_path, "url_path": url_path, "title": title,
             "icon": "mdi:shield-lock", "show_in_sidebar": True,
             "require_admin": False,
         }
