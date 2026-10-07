@@ -184,7 +184,26 @@ installe-la puis recharge.
 
 ---
 
-## 🔔 Alertes prêtes à l'emploi (blueprint)
+## 🔔 Alertes intégrées
+
+**OPNsense → ⚙ Configurer → Notifications** : coche les alertes voulues et
+choisis ton ou tes téléphones. Aucune automatisation à écrire.
+
+| Alerte | Envoyée quand |
+|---|---|
+| WAN coupé / rétabli | WAN coupé plus longtemps que le délai (1 min par défaut) ; le message de retour indique la durée de la coupure |
+| Latence élevée | Latence au-dessus du seuil (100 ms) pendant une durée (5 min), puis retour à la normale |
+| Mise à jour firmware | Une nouvelle version d'OPNsense est disponible |
+| Service arrêté / relancé | Un service s'arrête (ceux déjà arrêtés au démarrage sont ignorés) |
+| Tunnel VPN coupé / rétabli | Un tunnel WireGuard / IPsec / OpenVPN change d'état |
+| Disque presque plein | Partition racine au-dessus de 90 % (réarmé sous 85 %) |
+
+> 💡 Pendant une coupure du WAN, une notification push ne peut pas sortir de
+> chez toi (elle passe par Apple/Google), sauf en **local push** de l'app
+> Companion sur le Wi-Fi de la maison. Le message « WAN rétabli », lui, arrive
+> toujours, avec la durée de la coupure.
+
+### Avancé : blueprint
 
 [![Importer le blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/create-link/?redirect=blueprint_import&blueprint_url=https%3A%2F%2Fgithub.com%2Fspaghiari%2Fha-opnsense%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fopnsense_custom%2Fopnsense_alerts.yaml)
 

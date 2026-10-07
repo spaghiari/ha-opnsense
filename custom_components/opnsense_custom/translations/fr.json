@@ -67,6 +67,18 @@
           "wan_interface": "Interface WAN",
           "create_dashboard": "Créer un dashboard OPNsense dans la barre latérale"
         }
+      },
+      "notifications": {
+        "title": "Notifications",
+        "description": "Alertes OPNsense intégrées. Le message « WAN rétabli » indique la durée de la coupure : pendant une coupure, une notification push ne peut pas sortir de chez toi (sauf en local push sur le Wi-Fi de la maison).",
+        "data": {
+          "alerts": "Alertes à envoyer",
+          "notify_targets": "Envoyer à (téléphones / services notify)",
+          "notify_persistent": "Créer aussi une notification persistante dans Home Assistant",
+          "wan_down_delay": "Délai avant l'alerte « WAN coupé » (minutes)",
+          "latency_threshold": "Seuil de latence (ms)",
+          "latency_duration": "Durée au-dessus du seuil de latence (minutes)"
+        }
       }
     }
   },

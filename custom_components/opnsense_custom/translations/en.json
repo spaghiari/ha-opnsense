@@ -67,6 +67,18 @@
           "wan_interface": "WAN interface",
           "create_dashboard": "Create an OPNsense dashboard in the sidebar"
         }
+      },
+      "notifications": {
+        "title": "Notifications",
+        "description": "Built-in OPNsense alerts. The \"WAN restored\" message includes the outage duration: while the WAN is down, a mobile push cannot leave your home (except local push on your home Wi-Fi).",
+        "data": {
+          "alerts": "Alerts to send",
+          "notify_targets": "Send to (phones / notify services)",
+          "notify_persistent": "Also create a Home Assistant persistent notification",
+          "wan_down_delay": "Delay before the \"WAN down\" alert (minutes)",
+          "latency_threshold": "Latency threshold (ms)",
+          "latency_duration": "Time above the latency threshold (minutes)"
+        }
       }
     }
   },

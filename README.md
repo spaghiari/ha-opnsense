@@ -180,7 +180,26 @@ and that card renders as "Custom element doesn't exist" - install it and reload.
 
 ---
 
-## 🔔 Ready-made alerts (blueprint)
+## 🔔 Built-in alerts
+
+**OPNsense → ⚙ Configure → Notifications**: tick the alerts you want and pick
+your phone(s). No automation to write.
+
+| Alert | Sent when |
+|---|---|
+| WAN down / restored | WAN down for longer than the delay (1 min by default); the "restored" message includes the outage duration |
+| High latency | Latency above the threshold (100 ms) for a duration (5 min), then back to normal |
+| Firmware update | A new OPNsense version becomes available |
+| Service stopped / restarted | A service stops (services already stopped at startup are ignored) |
+| VPN tunnel down / restored | A WireGuard / IPsec / OpenVPN tunnel changes state |
+| Disk almost full | Root partition above 90 % (re-armed below 85 %) |
+
+> 💡 While the WAN is down, a mobile push cannot leave your home (it goes
+> through Apple/Google) - except with the Companion app's **local push** on
+> your home Wi-Fi. The "WAN restored" message always gets through, with the
+> outage duration.
+
+### Advanced: blueprint
 
 [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/create-link/?redirect=blueprint_import&blueprint_url=https%3A%2F%2Fgithub.com%2Fspaghiari%2Fha-opnsense%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fopnsense_custom%2Fopnsense_alerts.yaml)
 

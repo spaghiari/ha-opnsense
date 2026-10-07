@@ -16,6 +16,35 @@ CONF_WAN_INTERFACE = "wan_interface"
 # Crée automatiquement un dashboard "OPNsense" dans la barre latérale.
 CONF_CREATE_DASHBOARD = "create_dashboard"
 DEFAULT_CREATE_DASHBOARD = True
+
+# ---- Alertes intégrées (étape "Notifications" des options) ----
+CONF_ALERTS = "alerts"
+CONF_NOTIFY_TARGETS = "notify_targets"
+CONF_NOTIFY_PERSISTENT = "notify_persistent"
+CONF_WAN_DOWN_DELAY = "wan_down_delay"
+CONF_LATENCY_THRESHOLD = "latency_threshold"
+CONF_LATENCY_DURATION = "latency_duration"
+ALERT_WAN = "wan"
+ALERT_LATENCY = "latency"
+ALERT_FIRMWARE = "firmware"
+ALERT_SERVICES = "services"
+ALERT_VPN = "vpn"
+ALERT_DISK = "disk"
+ALERT_TYPES = (
+    ALERT_WAN, ALERT_LATENCY, ALERT_FIRMWARE, ALERT_SERVICES, ALERT_VPN,
+    ALERT_DISK,
+)
+# Pré-cochées dans le formulaire ; rien n'est envoyé tant que l'utilisateur
+# n'a pas validé l'étape (options absentes = aucune alerte).
+DEFAULT_ALERTS = [ALERT_WAN, ALERT_LATENCY, ALERT_FIRMWARE, ALERT_SERVICES,
+                  ALERT_VPN]
+DEFAULT_NOTIFY_PERSISTENT = True
+DEFAULT_WAN_DOWN_DELAY = 1        # minutes
+DEFAULT_LATENCY_THRESHOLD = 100   # ms
+DEFAULT_LATENCY_DURATION = 5      # minutes
+# Disque : alerte au-dessus de DISK_ALERT_PCT, ré-armée sous DISK_REARM_PCT.
+DISK_ALERT_PCT = 90
+DISK_REARM_PCT = 85
 # url_path de base du dashboard auto-généré (suffixé "-2", "-3"... pour les
 # firewalls suivants).
 DASHBOARD_URL_PATH = "opnsense"

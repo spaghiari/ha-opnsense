@@ -28,18 +28,35 @@ from .api import (
     OPNsenseForbiddenError,
 )
 from .const import (
+    ALERT_DISK,
+    ALERT_FIRMWARE,
+    ALERT_LATENCY,
+    ALERT_SERVICES,
+    ALERT_VPN,
+    ALERT_WAN,
+    CONF_ALERTS,
     CONF_API_KEY,
     CONF_API_SECRET,
     CONF_CREATE_DASHBOARD,
     CONF_HOST,
+    CONF_LATENCY_DURATION,
+    CONF_LATENCY_THRESHOLD,
+    CONF_NOTIFY_PERSISTENT,
+    CONF_NOTIFY_TARGETS,
     CONF_PORT,
     CONF_SCAN_INTERVAL,
     CONF_VERIFY_SSL,
+    CONF_WAN_DOWN_DELAY,
     CONF_WAN_INTERFACE,
+    DEFAULT_ALERTS,
     DEFAULT_CREATE_DASHBOARD,
+    DEFAULT_LATENCY_DURATION,
+    DEFAULT_LATENCY_THRESHOLD,
+    DEFAULT_NOTIFY_PERSISTENT,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_VERIFY_SSL,
+    DEFAULT_WAN_DOWN_DELAY,
     DOMAIN,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
@@ -290,13 +307,15 @@ class OPNsenseOptionsFlow(OptionsFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Mémorise l'entry pour relire les options actuelles."""
         self._entry = config_entry
+        self._options: dict[str, Any] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Affiche / sauvegarde les options modifiables."""
+        """Étape 1 : polling, interface WAN, dashboard."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            self._options.update(user_input)
+            return await self.async_step_notifications()
 
         current_interval = self._entry.options.get(
             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
@@ -340,3 +359,93 @@ class OPNsenseOptionsFlow(OptionsFlow):
             step_id="init",
             data_schema=options_schema,
         )
+
+    async def async_step_notifications(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Étape 2 : alertes intégrées et destinataires."""
+        if user_input is not None:
+            self._options.update(user_input)
+            return self.async_create_entry(title="", data=self._options)
+
+        opts = self._entry.options
+        # Sans option enregistrée, on pré-coche la sélection recommandée.
+        current_alerts = opts.get(CONF_ALERTS, DEFAULT_ALERTS)
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_ALERTS, default=current_alerts): SelectSelector(
+                    SelectSelectorConfig(
+                        options=_ALERT_OPTIONS,
+                        multiple=True,
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
+                vol.Optional(
+                    CONF_NOTIFY_TARGETS,
+                    default=opts.get(CONF_NOTIFY_TARGETS, []),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=_notify_options(self.hass),
+                        multiple=True,
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_NOTIFY_PERSISTENT,
+                    default=opts.get(
+                        CONF_NOTIFY_PERSISTENT, DEFAULT_NOTIFY_PERSISTENT
+                    ),
+                ): bool,
+                vol.Required(
+                    CONF_WAN_DOWN_DELAY,
+                    default=opts.get(CONF_WAN_DOWN_DELAY, DEFAULT_WAN_DOWN_DELAY),
+                ): vol.All(int, vol.Range(min=1, max=60)),
+                vol.Required(
+                    CONF_LATENCY_THRESHOLD,
+                    default=opts.get(
+                        CONF_LATENCY_THRESHOLD, DEFAULT_LATENCY_THRESHOLD
+                    ),
+                ): vol.All(int, vol.Range(min=10, max=2000)),
+                vol.Required(
+                    CONF_LATENCY_DURATION,
+                    default=opts.get(
+                        CONF_LATENCY_DURATION, DEFAULT_LATENCY_DURATION
+                    ),
+                ): vol.All(int, vol.Range(min=1, max=60)),
+            }
+        )
+        return self.async_show_form(step_id="notifications", data_schema=schema)
+
+
+# Libellés des alertes proposées (même convention que la liste des
+# interfaces : libellés directement en français).
+_ALERT_OPTIONS = [
+    SelectOptionDict(value=ALERT_WAN, label="WAN coupé / rétabli (avec durée)"),
+    SelectOptionDict(value=ALERT_LATENCY, label="Latence WAN élevée"),
+    SelectOptionDict(value=ALERT_FIRMWARE, label="Mise à jour firmware disponible"),
+    SelectOptionDict(value=ALERT_SERVICES, label="Service arrêté / relancé"),
+    SelectOptionDict(value=ALERT_VPN, label="Tunnel VPN coupé / rétabli"),
+    SelectOptionDict(value=ALERT_DISK, label="Disque presque plein (> 90 %)"),
+]
+
+# Services notify génériques qu'on ne propose pas comme destinataires.
+_NOTIFY_EXCLUDED = {"notify", "persistent_notification", "send_message"}
+
+
+def _notify_options(hass) -> list[SelectOptionDict]:
+    """Services notify disponibles, téléphones (mobile_app) en premier."""
+    services = sorted(
+        s for s in hass.services.async_services().get("notify", {})
+        if s not in _NOTIFY_EXCLUDED
+    )
+    services.sort(key=lambda s: not s.startswith("mobile_app_"))
+    options = []
+    for service in services:
+        if service.startswith("mobile_app_"):
+            label = "Téléphone : " + service.removeprefix("mobile_app_").replace(
+                "_", " "
+            )
+        else:
+            label = f"notify.{service}"
+        options.append(SelectOptionDict(value=service, label=label))
+    return options

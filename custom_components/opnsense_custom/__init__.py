@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .alerts import OPNsenseAlerts
 from .api import OPNsenseApiClient
 from .const import (
     CONF_API_KEY,
@@ -89,6 +90,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Pose le dashboard "OPNsense" dans la sidebar (après que les entités
     # soient enregistrées, pour lire leurs entity_id réels). Best-effort.
     await async_register_dashboard(hass, entry)
+
+    # Alertes intégrées (étape "Notifications" des options) : écoute chaque
+    # rafraîchissement ; le premier appel mémorise l'état de référence.
+    alerts = OPNsenseAlerts(hass, entry, coordinator)
+    if alerts.active:
+        entry.async_on_unload(coordinator.async_add_listener(alerts.handle_update))
+        alerts.handle_update()
 
     return True
 
