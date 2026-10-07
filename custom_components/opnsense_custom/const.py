@@ -47,11 +47,18 @@ API_ENDPOINTS = {
     "cpu_type": "/api/diagnostics/cpu_usage/getCPUType",
     "interfaces": "/api/interfaces/overview/interfacesInfo",
     "traffic_totals": "/api/diagnostics/traffic/interface",
-    # NB : top/wan cible l'interface OPNsense nommée littéralement "wan".
-    # Les setups dont le WAN porte un autre nom de config ne verront pas le
-    # débit temps réel / top destinations (limite connue, cf. backlog).
-    "traffic_wan": "/api/diagnostics/traffic/top/wan",
+    # {iface} = identifiant de config OPNsense de l'interface WAN résolue
+    # ("wan", "opt1"...), fourni par le coordinator.
+    "traffic_wan": "/api/diagnostics/traffic/top/{iface}",
+    # Optionnels (privilèges "Status: Gateways" / "Status: Services") :
+    # sans eux, seuls les capteurs latence/pertes/services restent vides.
+    "gateway_status": "/api/routes/gateway/status",
+    "services": "/api/core/service/search",
 }
+
+# Identifiant de config OPNsense par défaut de l'interface WAN (avant la
+# première résolution par le coordinator).
+DEFAULT_WAN_IDENTIFIER = "wan"
 
 # Manufacturer / model pour DeviceInfo
 MANUFACTURER = "Deciso"

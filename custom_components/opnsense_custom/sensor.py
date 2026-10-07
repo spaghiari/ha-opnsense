@@ -17,6 +17,7 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfDataRate,
     UnitOfInformation,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -448,6 +449,173 @@ def _top_dest_out_name(data: dict) -> str | None:
     return top[0]["name"] if top else None
 
 
+# ----- Passerelles (dpinger) -----
+#
+# /api/routes/gateway/status renvoie {"items": [{name, address, status,
+# status_translated, delay: "3.2 ms", stddev, loss: "0.0 %", monitor}]}.
+# Les valeurs numériques sont des chaînes avec unité, "~" si non mesuré.
+
+
+def _leading_float(raw: Any) -> float | None:
+    """Extrait le nombre en tête d'une chaîne type "3.2 ms" / "0.0 %"."""
+    if isinstance(raw, int | float):
+        return float(raw)
+    if not isinstance(raw, str):
+        return None
+    token = raw.strip().split(" ")[0]
+    try:
+        return float(token)
+    except ValueError:
+        return None
+
+
+def _gateways(data: dict) -> list[dict] | None:
+    """Liste normalisée des passerelles surveillées par OPNsense."""
+    items = _get(data, "gateway_status", "items")
+    if not isinstance(items, list):
+        return None
+    gateways = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        gateways.append(
+            {
+                "name": item.get("name"),
+                "address": item.get("address"),
+                "monitor": item.get("monitor"),
+                "status": item.get("status_translated") or item.get("status"),
+                "online": item.get("status") in ("none", "online"),
+                "delay_ms": _leading_float(item.get("delay")),
+                "loss_pct": _leading_float(item.get("loss")),
+            }
+        )
+    return gateways
+
+
+def _wan_gateway(data: dict) -> dict | None:
+    """Passerelle de l'interface WAN résolue (IPv4 en priorité).
+
+    On rapproche les adresses de passerelle portées par l'interface WAN
+    (interfacesInfo) de celles surveillées par dpinger ; à défaut, première
+    passerelle mesurée.
+    """
+    gateways = _gateways(data)
+    if not gateways:
+        return None
+    wan = _wan_interface(data) or {}
+    for address in wan.get("gateways") or []:
+        for gw in gateways:
+            if gw.get("address") == address and gw.get("delay_ms") is not None:
+                return gw
+    for gw in gateways:
+        if gw.get("delay_ms") is not None:
+            return gw
+    return None
+
+
+def _wan_latency(data: dict) -> float | None:
+    gw = _wan_gateway(data)
+    return gw.get("delay_ms") if gw else None
+
+
+def _wan_packet_loss(data: dict) -> float | None:
+    gw = _wan_gateway(data)
+    return gw.get("loss_pct") if gw else None
+
+
+# ----- Services -----
+#
+# /api/core/service/search renvoie {"rows": [{id, name, description,
+# running: 0|1, locked}]}.
+
+
+def _services(data: dict) -> list[dict] | None:
+    rows = _get(data, "services", "rows")
+    if not isinstance(rows, list):
+        return None
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def _services_stopped(data: dict) -> int | None:
+    services = _services(data)
+    if services is None:
+        return None
+    return sum(1 for svc in services if not int(svc.get("running") or 0))
+
+
+def _services_attributes(data: dict) -> dict:
+    services = _services(data) or []
+    stopped = [
+        svc.get("description") or svc.get("name")
+        for svc in services
+        if not int(svc.get("running") or 0)
+    ]
+    return {
+        "total": len(services),
+        "running": len(services) - len(stopped),
+        "stopped": stopped,
+    }
+
+
+# ----- Tunnels VPN -----
+#
+# Déduits d'interfacesInfo (aucun privilège supplémentaire) : interfaces des
+# groupes WireGuard / IPsec / OpenVPN.
+
+_TUNNEL_KINDS = (
+    ("wireguard", "WireGuard"),
+    ("wg", "WireGuard"),
+    ("ipsec", "IPsec"),
+    ("openvpn", "OpenVPN"),
+)
+
+
+def _tunnel_kind(row: dict) -> str | None:
+    groups = row.get("groups") or []
+    for group, label in _TUNNEL_KINDS:
+        if group in groups:
+            return label
+    if str(row.get("device") or "").startswith("ovpn"):
+        return "OpenVPN"
+    return None
+
+
+def _tunnels(data: dict) -> list[dict] | None:
+    """Tunnels VPN avec leur état (up/down) et leurs adresses."""
+    rows = _get(data, "interfaces", "rows")
+    if not isinstance(rows, list):
+        return None
+    tunnels = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("enabled") is False:
+            continue
+        kind = _tunnel_kind(row)
+        if kind is None:
+            continue
+        description = row.get("description") or ""
+        if not description or description == "Unassigned Interface":
+            description = row.get("device") or "?"
+        address = (row.get("addr4") or row.get("addr6") or "").split("/")[0]
+        tunnels.append(
+            {
+                "name": description.removeprefix("IFACE_").replace("_", " "),
+                "device": row.get("device"),
+                "kind": kind,
+                "up": row.get("status") == "up",
+                "address": address or None,
+                "remote": (row.get("tunnel") or {}).get("dest_addr"),
+            }
+        )
+    return tunnels
+
+
+def _vpn_tunnels_up(data: dict) -> int | None:
+    tunnels = _tunnels(data)
+    if tunnels is None:
+        return None
+    return sum(1 for tunnel in tunnels if tunnel["up"])
+
+
 # ============================================================
 #  Description de chaque sensor
 # ============================================================
@@ -734,6 +902,50 @@ SENSOR_DESCRIPTIONS: tuple[tuple[SensorEntityDescription, Callable], ...] = (
         ),
         _top_dest_out_name,
     ),
+    # ----- Qualité de la connexion (privilège "Status: Gateways") -----
+    (
+        SensorEntityDescription(
+            key="wan_latency",
+            translation_key="wan_latency",
+            icon="mdi:timer-outline",
+            device_class=SensorDeviceClass.DURATION,
+            native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+            suggested_display_precision=1,
+            state_class=SensorStateClass.MEASUREMENT,
+        ),
+        _wan_latency,
+    ),
+    (
+        SensorEntityDescription(
+            key="wan_packet_loss",
+            translation_key="wan_packet_loss",
+            icon="mdi:package-variant-remove",
+            native_unit_of_measurement=PERCENTAGE,
+            suggested_display_precision=1,
+            state_class=SensorStateClass.MEASUREMENT,
+        ),
+        _wan_packet_loss,
+    ),
+    # ----- Services (privilège "Status: Services") -----
+    (
+        SensorEntityDescription(
+            key="services_stopped",
+            translation_key="services_stopped",
+            icon="mdi:cog-stop-outline",
+            state_class=SensorStateClass.MEASUREMENT,
+        ),
+        _services_stopped,
+    ),
+    # ----- Tunnels VPN (déduits des interfaces) -----
+    (
+        SensorEntityDescription(
+            key="vpn_tunnels_up",
+            translation_key="vpn_tunnels_up",
+            icon="mdi:vpn",
+            state_class=SensorStateClass.MEASUREMENT,
+        ),
+        _vpn_tunnels_up,
+    ),
 )
 
 
@@ -742,6 +954,15 @@ SENSOR_DESCRIPTIONS: tuple[tuple[SensorEntityDescription, Callable], ...] = (
 ATTRIBUTE_EXTRACTORS = {
     "wan_top_dest_in": lambda data: {"top_5": _top_destinations(data, "in") or []},
     "wan_top_dest_out": lambda data: {"top_5": _top_destinations(data, "out") or []},
+    "wan_latency": lambda data: {
+        "gateway": (_wan_gateway(data) or {}).get("name"),
+        "gateways": _gateways(data) or [],
+    },
+    "services_stopped": _services_attributes,
+    "vpn_tunnels_up": lambda data: {
+        "total": len(_tunnels(data) or []),
+        "tunnels": _tunnels(data) or [],
+    },
 }
 
 

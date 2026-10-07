@@ -99,7 +99,11 @@
       "wan_total_received": { "name": "Total reçu WAN" },
       "wan_total_transmitted": { "name": "Total transmis WAN" },
       "wan_top_dest_in": { "name": "Top destination entrante" },
-      "wan_top_dest_out": { "name": "Top destination sortante" }
+      "wan_top_dest_out": { "name": "Top destination sortante" },
+      "wan_latency": { "name": "Latence WAN" },
+      "wan_packet_loss": { "name": "Pertes de paquets WAN" },
+      "services_stopped": { "name": "Services arrêtés" },
+      "vpn_tunnels_up": { "name": "Tunnels VPN actifs" }
     },
     "binary_sensor": {
       "update_available": { "name": "Mise à jour disponible" },

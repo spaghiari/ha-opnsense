@@ -16,7 +16,13 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .api import OPNsenseApiClient, OPNsenseApiError, OPNsenseAuthError
-from .const import DEFAULT_MODEL, DOMAIN, MANUFACTURER, WAN_AUTO
+from .const import (
+    DEFAULT_MODEL,
+    DEFAULT_WAN_IDENTIFIER,
+    DOMAIN,
+    MANUFACTURER,
+    WAN_AUTO,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -138,11 +144,14 @@ class OPNsenseDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.client = client
         self.entry = entry
         self.wan_interface = wan_interface
+        # Identifiant de config OPNsense du WAN ("wan", "opt1"...), appris au
+        # fil des cycles pour interroger le bon endpoint traffic/top/{iface}.
+        self._wan_identifier = DEFAULT_WAN_IDENTIFIER
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Appelé automatiquement toutes les `scan_interval` secondes."""
         try:
-            data = await self.client.async_get_all()
+            data = await self.client.async_get_all(self._wan_identifier)
         except OPNsenseAuthError as err:
             # Clé API invalide/révoquée : déclenche le flux de ré-authentification
             raise ConfigEntryAuthFailed(
@@ -161,5 +170,36 @@ class OPNsenseDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Résout une fois par cycle le device WAN et l'injecte pour les entités
         rows = (data.get("interfaces") or {}).get("rows")
         data["_wan_device"] = resolve_wan_device(rows, self.wan_interface)
+
+        # Le WAN ne s'appelle pas forcément "wan" côté config OPNsense : si son
+        # identifiant réel diffère de celui interrogé, on refait l'appel trafic
+        # tout de suite (une seule fois, ensuite l'identifiant est mémorisé).
+        wan_row = find_wan_row(data)
+        identifier = (wan_row or {}).get("identifier")
+        if identifier and identifier != self._wan_identifier:
+            self._wan_identifier = identifier
+            try:
+                data["traffic_wan"] = await self.client.get(
+                    "traffic_wan", iface=identifier
+                )
+            except OPNsenseAuthError as err:
+                raise ConfigEntryAuthFailed(
+                    "Clé API OPNsense invalide - reconfiguration nécessaire"
+                ) from err
+            except OPNsenseApiError as err:
+                _LOGGER.debug("Trafic WAN '%s' indisponible: %s", identifier, err)
+                data["traffic_wan"] = None
+
+        # La réponse est indexée par l'identifiant d'interface : on la ramène
+        # sous la clé "wan" attendue par les capteurs.
+        traffic = data.get("traffic_wan")
+        if (
+            isinstance(traffic, dict)
+            and self._wan_identifier != DEFAULT_WAN_IDENTIFIER
+            and self._wan_identifier in traffic
+        ):
+            data["traffic_wan"] = {
+                DEFAULT_WAN_IDENTIFIER: traffic[self._wan_identifier]
+            }
 
         return data

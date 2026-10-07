@@ -8,7 +8,7 @@ from typing import Any
 import aiohttp
 from aiohttp import BasicAuth, ClientError, ClientTimeout
 
-from .const import API_ENDPOINTS, HTTP_TIMEOUT
+from .const import API_ENDPOINTS, DEFAULT_WAN_IDENTIFIER, HTTP_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +54,9 @@ class OPNsenseApiClient:
         self._session = session
         self._verify_ssl = verify_ssl
         self._timeout = ClientTimeout(total=HTTP_TIMEOUT)
+        # Endpoints déjà signalés comme interdits (403) : on ne re-loggue pas
+        # l'avertissement à chaque polling, seulement au premier refus.
+        self._forbidden_logged: set[str] = set()
 
     async def _request(
         self,
@@ -99,9 +102,12 @@ class OPNsenseApiClient:
         except ClientError as err:
             raise OPNsenseApiError(f"Erreur réseau sur {path}: {err}") from err
 
-    async def get(self, endpoint_key: str) -> dict[str, Any]:
-        """Appel GET sur un endpoint référencé dans API_ENDPOINTS."""
-        path = API_ENDPOINTS[endpoint_key]
+    async def get(self, endpoint_key: str, **params: str) -> dict[str, Any]:
+        """Appel GET sur un endpoint référencé dans API_ENDPOINTS.
+
+        `params` remplit les gabarits du chemin (ex: iface="wan").
+        """
+        path = API_ENDPOINTS[endpoint_key].format(**params)
         return await self._request("GET", path)
 
     async def post(
@@ -119,8 +125,13 @@ class OPNsenseApiClient:
         """
         return await self.get("system_information")
 
-    async def async_get_all(self) -> dict[str, dict[str, Any]]:
+    async def async_get_all(
+        self, wan_identifier: str = DEFAULT_WAN_IDENTIFIER
+    ) -> dict[str, dict[str, Any]]:
         """Récupère toutes les données en parallèle pour le coordinator.
+
+        `wan_identifier` : identifiant de config OPNsense de l'interface WAN
+        ("wan", "opt1"...) utilisé pour le débit temps réel / top destinations.
 
         Renvoie un dict avec une clé par endpoint. Si un endpoint échoue,
         sa valeur sera None et l'erreur est loggée (les autres continuent).
@@ -135,8 +146,14 @@ class OPNsenseApiClient:
             "interfaces",
             "traffic_totals",
             "traffic_wan",
+            "gateway_status",
+            "services",
         ]
-        tasks = [self.get(key) for key in keys]
+        tasks = [
+            self.get(key, iface=wan_identifier) if key == "traffic_wan"
+            else self.get(key)
+            for key in keys
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         data: dict[str, dict[str, Any] | None] = {}
@@ -148,9 +165,12 @@ class OPNsenseApiClient:
             if isinstance(result, OPNsenseForbiddenError):
                 # Privilège manquant sur CET endpoint : on dégrade proprement
                 # (les autres capteurs continuent de fonctionner).
-                _LOGGER.warning(
-                    "Privilège manquant pour '%s' côté OPNsense: %s", key, result
-                )
+                if key not in self._forbidden_logged:
+                    self._forbidden_logged.add(key)
+                    _LOGGER.warning(
+                        "Privilège manquant pour '%s' côté OPNsense: %s "
+                        "(message affiché une seule fois)", key, result
+                    )
                 data[key] = None
             elif isinstance(result, Exception):
                 _LOGGER.warning(
