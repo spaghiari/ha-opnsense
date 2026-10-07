@@ -1,11 +1,14 @@
 blueprint:
   name: OPNsense - Alertes WAN et latence
   description: >-
-    Prévient quand le WAN d'OPNsense tombe, quand il revient, ou quand la
-    latence vers internet reste élevée. Par défaut, une notification
-    persistante est créée dans Home Assistant ; remplace l'action par une
-    notification mobile si tu préfères. Les variables `title` et `message`
-    sont disponibles dans tes actions.
+    Prévient quand le WAN d'OPNsense tombe, quand il revient (avec la durée
+    de la coupure), ou quand la latence vers internet reste élevée. Par
+    défaut, une notification persistante est créée dans Home Assistant ;
+    remplace l'action par une notification mobile si tu préfères. Les
+    variables `title` et `message` sont disponibles dans tes actions.
+    Astuce : pendant la coupure, une notification push ne peut pas sortir
+    de chez toi, sauf en local push sur le Wi-Fi de la maison. Le message
+    de retour, lui, part toujours, avec la durée de la coupure.
   domain: automation
   author: spaghiari
   source_url: https://github.com/spaghiari/ha-opnsense/blob/main/blueprints/automation/opnsense_custom/opnsense_alerts.yaml
@@ -91,6 +94,15 @@ max: 5
 variables:
   latency_entity: !input latency_sensor
   threshold: !input latency_threshold
+  down_delay: !input wan_down_delay
+  # Délai d'alerte en secondes (le sélecteur duration renvoie un dict).
+  down_delay_s: >-
+    {{ (down_delay.days | default(0)) * 86400 + (down_delay.hours | default(0)) * 3600
+       + (down_delay.minutes | default(0)) * 60 + (down_delay.seconds | default(0)) }}
+  # Durée de la coupure, connue seulement au retour du WAN.
+  outage_s: >-
+    {{ (as_timestamp(trigger.to_state.last_changed) - as_timestamp(trigger.from_state.last_changed))
+       | int if trigger.id == 'wan_up' else 0 }}
   title: >-
     {{ {'wan_down': '🔴 OPNsense : WAN coupé',
         'wan_up': '🟢 OPNsense : WAN rétabli',
@@ -99,7 +111,8 @@ variables:
     {% if trigger.id == 'wan_down' %}
     La connexion internet est coupée depuis {{ as_timestamp(trigger.to_state.last_changed) | timestamp_custom('%H:%M') }}.
     {% elif trigger.id == 'wan_up' %}
-    La connexion internet est revenue à {{ now().strftime('%H:%M') }}.
+    {% set m = (outage_s / 60) | int %}
+    Internet est revenu à {{ as_timestamp(trigger.to_state.last_changed) | timestamp_custom('%H:%M') }} après {{ (m ~ ' min') if m >= 1 else (outage_s ~ ' s') }} de coupure (depuis {{ as_timestamp(trigger.from_state.last_changed) | timestamp_custom('%H:%M') }}).
     {% else %}
     Latence WAN à {{ states(latency_entity) | float(0) | round(1) }} ms (seuil {{ threshold }} ms).
     {% endif %}
@@ -121,5 +134,16 @@ triggers:
     entity_id: !input latency_sensor
     above: !input latency_threshold
     for: !input latency_duration
+
+conditions:
+  # Pas de "WAN rétabli" après une micro-coupure qui n'a jamais été signalée.
+  - condition: or
+    conditions:
+      - condition: not
+        conditions:
+          - condition: trigger
+            id: wan_up
+      - condition: template
+        value_template: "{{ outage_s >= down_delay_s }}"
 
 actions: !input alert_actions
