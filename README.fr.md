@@ -30,6 +30,12 @@ Une intégration custom Home Assistant qui expose votre **firewall OPNsense** so
 - **Top 5 destinations** avec résolution DNS inverse
 - **Connectivité WAN** (binary sensor)
 
+### Santé de la connexion *(v1.7)*
+- **Latence et pertes de paquets WAN** issues du moniteur de passerelles d'OPNsense (dpinger)
+- **Services arrêtés** : compteur + liste des services à l'arrêt
+- **Tunnels VPN** (WireGuard / IPsec / OpenVPN) : nombre de tunnels actifs et détail par tunnel - aucun privilège supplémentaire
+- Le WAN n'a plus besoin de s'appeler `wan` dans OPNsense pour le débit temps réel / top destinations
+
 ### Gestion firmware
 - **Entité `update` native** - compare version installée vs disponible, bouton "Installer" en un clic
 - **Bouton "Vérifier les mises à jour"** pour forcer un check à la demande
@@ -65,6 +71,8 @@ Vous devez créer un **utilisateur API dédié avec privilèges minimaux** dans 
 | `System: Firmware` | Version firmware + mises à jour |
 | `System: Status` | Endpoint infos système |
 | `Reporting: Traffic` | Capteurs débit WAN |
+| `Status: Gateways` *(optionnel)* | Latence et pertes de paquets WAN |
+| `Status: Services` *(optionnel)* | Capteur des services arrêtés |
 
 > ⚠️ **Ne cochez PAS "All pages"** - ça annulerait l'intérêt d'un utilisateur restreint.
 
@@ -144,7 +152,9 @@ clé/secret et l'intégration se recharge. Vous pouvez aussi utiliser
 **Automatique** - à l'installation, l'intégration crée un dashboard **OPNsense**
 soigné dans la barre latérale : bandeau d'état qui vire au rouge si le WAN
 tombe, tuiles débit/CPU/RAM avec sparkline, courbe de trafic WAN sur 24 h,
-barre de remplissage disque et top destinations classées avec barres au prorata. Il est
+latence/pertes et santé des services, tableau des tunnels VPN, barre de
+remplissage disque et top destinations classées avec barres au prorata. Chaque
+pare-feu a son propre dashboard (`opnsense`, `opnsense-2`...). Il est
 construit à partir de tes **vrais entity_id**, donc il fonctionne quelle que
 soit la langue de ton Home Assistant. Désactivable à tout moment via
 **OPNsense → ⚙ Configurer → Créer un dashboard OPNsense dans la barre latérale**.
@@ -170,6 +180,17 @@ installe-la puis recharge.
 > écrasées lors d'une mise à jour. Pour personnaliser librement, désactive
 > l'option et duplique le dashboard, ou pars de
 > [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml).
+
+---
+
+## 🔔 Alertes prêtes à l'emploi (blueprint)
+
+[![Importer le blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/create-link/?redirect=blueprint_import&blueprint_url=https%3A%2F%2Fgithub.com%2Fspaghiari%2Fha-opnsense%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fopnsense_custom%2Fopnsense_alerts.yaml)
+
+Prévient quand le WAN tombe (après un délai réglable), quand il revient, et
+quand la latence reste au-dessus d'un seuil. Par défaut, crée une notification
+persistante dans Home Assistant ; remplace l'action par une notification
+mobile si tu préfères (`{{ title }}` / `{{ message }}` sont disponibles).
 
 ---
 

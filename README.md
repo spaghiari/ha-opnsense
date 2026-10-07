@@ -30,6 +30,12 @@ A custom Home Assistant integration that exposes your **OPNsense firewall** as a
 - **Top 5 destinations** with reverse DNS resolution
 - **WAN connectivity** binary sensor
 
+### Connection health *(v1.7)*
+- **WAN latency & packet loss** from OPNsense's gateway monitor (dpinger)
+- **Stopped services** counter with the list of stopped services
+- **VPN tunnels** (WireGuard / IPsec / OpenVPN) up count with per-tunnel details - no extra privilege needed
+- The WAN no longer has to be named `wan` in OPNsense for real-time throughput / top destinations
+
 ### Firmware management
 - **Native `update` entity** - compare installed vs latest version, one-click install
 - **"Check for updates" button** to force a check on demand
@@ -65,6 +71,8 @@ Go to **System → Access → Groups → +** and create a group with these **8 p
 | `System: Firmware` | Firmware version + updates |
 | `System: Status` | System information endpoint |
 | `Reporting: Traffic` | WAN throughput sensors |
+| `Status: Gateways` *(optional)* | WAN latency & packet loss |
+| `Status: Services` *(optional)* | Stopped services sensor |
 
 > ⚠️ **Do NOT grant "All pages"** - that would defeat the purpose of a restricted user.
 
@@ -141,8 +149,10 @@ integration reloads. You can also use **⋮ → Reconfigure** to change host/por
 
 **Automatic** - on setup, the integration creates a polished **OPNsense**
 dashboard in the sidebar: a status banner that turns red when the WAN drops,
-throughput/CPU/RAM tiles with sparklines, a 24 h WAN traffic chart, a disk bar
-and ranked top destinations with proportional bars. It is built from your **real
+throughput/CPU/RAM tiles with sparklines, a 24 h WAN traffic chart, latency/loss
+and services health, a VPN tunnels table, a disk bar and ranked top destinations
+with proportional bars. Each firewall gets its own dashboard (`opnsense`,
+`opnsense-2`...). It is built from your **real
 entity IDs**, so it works whatever your Home Assistant language is. Disable it
 any time via **OPNsense → ⚙ Configure → Create an OPNsense dashboard in the
 sidebar**.
@@ -166,6 +176,17 @@ and that card renders as "Custom element doesn't exist" - install it and reload.
 > new template version, so manual edits to it may be overwritten on upgrade. To
 > customise freely, turn the option off and duplicate the dashboard, or start
 > from [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml).
+
+---
+
+## 🔔 Ready-made alerts (blueprint)
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/create-link/?redirect=blueprint_import&blueprint_url=https%3A%2F%2Fgithub.com%2Fspaghiari%2Fha-opnsense%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fopnsense_custom%2Fopnsense_alerts.yaml)
+
+Notifies you when the WAN goes down (after a configurable delay), when it comes
+back, and when latency stays above a threshold. By default it creates a Home
+Assistant persistent notification; swap the action for a mobile push if you
+prefer (`{{ title }}` / `{{ message }}` are available).
 
 ---
 
