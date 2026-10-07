@@ -21,6 +21,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import OPNsenseDataCoordinator, build_device_info, find_wan_row
@@ -150,24 +151,37 @@ def _uptime(data: dict) -> str | None:
 
 
 def _boottime(data: dict) -> datetime | None:
-    """Convertit la string boottime en datetime UTC pour HA."""
+    """Convertit la string boottime en datetime UTC pour HA.
+
+    Format OPNsense : "Mon May 25 10:45:38 CEST 2026". strptime ne sait pas
+    résoudre une abréviation de fuseau (CEST, EST...) : l'heure est donc lue
+    sans fuseau puis interprétée dans le fuseau de Home Assistant (supposé
+    identique à celui du pare-feu). Un décalage numérique (+0200) ou UTC/GMT
+    est respecté tel quel.
+    """
     raw = _get(data, "system_time", "boottime")
     if not isinstance(raw, str):
         return None
-    # Format OPNsense : "Mon May 25 10:45:38 CEST 2026"
-    for fmt in (
-        "%a %b %d %H:%M:%S %Z %Y",
-        "%a %b %d %H:%M:%S %z %Y",
-    ):
-        try:
-            dt = datetime.strptime(raw, fmt)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-            return dt
-        except ValueError:
-            continue
-    _LOGGER.debug("Format boottime non reconnu : %s", raw)
-    return None
+    parts = raw.split()
+    if len(parts) != 6:
+        _LOGGER.debug("Format boottime non reconnu : %s", raw)
+        return None
+    tz_token = parts[4]
+    naive_raw = " ".join(parts[:4] + parts[5:])
+    try:
+        naive = datetime.strptime(naive_raw, "%a %b %d %H:%M:%S %Y")
+    except ValueError:
+        _LOGGER.debug("Format boottime non reconnu : %s", raw)
+        return None
+    if tz_token.upper() in ("UTC", "GMT", "Z"):
+        return naive.replace(tzinfo=UTC)
+    try:
+        offset = datetime.strptime(tz_token, "%z").tzinfo
+    except ValueError:
+        offset = None
+    if offset is not None:
+        return naive.replace(tzinfo=offset).astimezone(UTC)
+    return dt_util.as_utc(naive.replace(tzinfo=dt_util.get_default_time_zone()))
 
 
 def _loadavg_1(data: dict) -> float | None:
