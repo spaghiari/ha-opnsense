@@ -148,8 +148,9 @@ integration reloads. You can also use **⋮ → Reconfigure** to change host/por
 ## 🖥️ Ready-made dashboard (Console)
 
 **Automatic** - on setup, the integration creates a polished **OPNsense**
-dashboard in the sidebar, styled like a monitoring console (graphite panels,
-monospace figures, OPNsense orange accent): a status banner that turns red when the WAN drops,
+dashboard in the sidebar, styled like a monitoring console (server-rack photo
+background, smoked-glass panels, monospace figures, OPNsense orange accent,
+"Real-time" band on top): a status banner that turns red when the WAN drops,
 throughput/CPU/RAM tiles with sparklines, a 24 h WAN traffic chart, latency/loss
 and services health, a VPN tunnels table, a disk bar and ranked top destinations
 with proportional bars. Each firewall gets its own dashboard (`opnsense`,
@@ -179,6 +180,23 @@ and that card renders as "Custom element doesn't exist" - install it and reload.
 > from [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml).
 
 ---
+
+## ⚡ Three-speed refresh (v2)
+
+| Speed | Data | How |
+|---|---|---|
+| **Real-time** (~1 s, published every 2 s by default) | WAN throughput, **CPU %** | OPNsense's own live streams (the ones its dashboard uses): one long-lived connection, OPNsense pushes the values, no polling |
+| **Fast** (10 s by default) | WAN state, public IPs, latency / packet loss, VPN tunnels, byte counters | Light polling of a few endpoints |
+| **Slow** (60 s by default) | Firmware, system, disk, RAM, services, top destinations | Regular polling |
+
+- Throughput is an **exact average** (bytes × 8 / elapsed time), never an instantaneous sample.
+- If a stream is unavailable (privilege, network), throughput falls back to the
+  byte counters of the fast polling - transparently, no error spam.
+- State writes are throttled to the publish interval, so the recorder database
+  does not grow with every pushed event.
+- Everything is tunable in **OPNsense → ⚙ Configure** (real-time on/off,
+  publish interval, fast and slow intervals). The download diagnostics show
+  the live stream status.
 
 ## 🔔 Built-in alerts
 

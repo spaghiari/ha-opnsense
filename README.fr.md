@@ -150,8 +150,9 @@ clé/secret et l'intégration se recharge. Vous pouvez aussi utiliser
 ## 🖥️ Dashboard prêt à l'emploi (Console)
 
 **Automatique** - à l'installation, l'intégration crée un dashboard **OPNsense**
-façon pupitre de supervision dans la barre latérale (panneaux graphite,
-chiffres en monospace, accent orange OPNsense) : bandeau d'état qui vire au rouge si le WAN
+façon pupitre de supervision dans la barre latérale (fond photo de baie
+serveurs, panneaux en verre fumé, chiffres en monospace, accent orange
+OPNsense, bande « Temps réel » en tête) : bandeau d'état qui vire au rouge si le WAN
 tombe, tuiles débit/CPU/RAM avec sparkline, courbe de trafic WAN sur 24 h,
 latence/pertes et santé des services, tableau des tunnels VPN, barre de
 remplissage disque et top destinations classées avec barres au prorata. Chaque
@@ -183,6 +184,23 @@ installe-la puis recharge.
 > [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml).
 
 ---
+
+## ⚡ Rafraîchissement à trois vitesses (v2)
+
+| Vitesse | Données | Mécanisme |
+|---|---|---|
+| **Temps réel** (~1 s, publié toutes les 2 s par défaut) | Débit WAN, **CPU %** | Les flux continus d'OPNsense (ceux de son propre dashboard) : une connexion ouverte, OPNsense pousse les valeurs, sans polling |
+| **Rapide** (10 s par défaut) | État du WAN, IP publiques, latence / pertes, tunnels VPN, compteurs d'octets | Polling léger de quelques endpoints |
+| **Lent** (60 s par défaut) | Firmware, système, disque, RAM, services, top destinations | Polling classique |
+
+- Le débit est une **moyenne exacte** (octets × 8 / temps écoulé), jamais un instantané.
+- Si un flux est indisponible (droits, réseau), le débit se rabat sur les
+  compteurs du polling rapide, sans erreur ni avalanche de logs.
+- Les écritures d'état sont limitées à l'intervalle de publication : la base de
+  l'historique ne grossit pas à chaque événement reçu.
+- Tout se règle dans **OPNsense → ⚙ Configurer** (temps réel on/off, fréquence
+  de publication, intervalles rapide et lent). Le diagnostic téléchargeable
+  indique l'état des flux temps réel.
 
 ## 🔔 Alertes intégrées
 

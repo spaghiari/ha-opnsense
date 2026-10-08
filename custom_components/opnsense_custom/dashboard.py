@@ -57,8 +57,7 @@ TOP_ROWS = 5
 TUNNEL_SLOTS = 8
 
 # ---- Tokens de la direction "Console" ----
-_INK = "#0A0B0D"          # fond de page
-_PANEL = "#131518"        # surface des cartes
+_PANEL = "rgba(16,18,21,0.74)"  # surface des cartes, laisse deviner le fond
 _LINE = "rgba(255,255,255,0.07)"
 _TEXT = "#ECE7E1"         # blanc chaud
 _MUTED = "#8C8A86"
@@ -70,10 +69,22 @@ _BAD = "#FF5A4E"
 _MONO = ("ui-monospace, 'JetBrains Mono', 'Cascadia Mono', 'SF Mono', "
          "Consolas, monospace")
 
-# Panneau plat : angles nets, filet 1 px, pas de flou ni d'ombre portée.
+# Image de fond : baie de serveurs aux câbles orange (rappel de l'accent
+# OPNsense), assombrie et floutée côté CDN pour garder le texte lisible.
+_BACKGROUND = {
+    "image": (
+        "https://images.unsplash.com/photo-1558494949-ef010cbdcc31"
+        "?auto=format&fit=crop&w=2400&q=80&blend=0A0B0D&blend-alpha=55&blur=6"
+    ),
+    "size": "cover", "alignment": "center", "repeat": "no-repeat",
+    "attachment": "fixed",
+}
+
+# Panneau : angles nets, filet 1 px, verre fumé sur l'image de fond.
 _PANEL_CSS = (
     "ha-card { background: " + _PANEL + "; border: 1px solid " + _LINE + "; "
-    "border-radius: 10px; box-shadow: none; "
+    "border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); "
+    "backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); "
     "--primary-text-color: " + _TEXT + "; "
     "--secondary-text-color: " + _MUTED + "; } "
 )
@@ -130,18 +141,30 @@ def _heading(title: str, icon: str) -> dict:
 
 
 def _kpi(entity: str, name: str, icon: str, color: str, columns: int,
-         decimals: int) -> dict:
-    """Tuile chiffre clé + sparkline 6 h (mini-graph-card)."""
+         decimals: int, live: bool = False) -> dict:
+    """Tuile chiffre clé + sparkline (mini-graph-card).
+
+    `live` : grande tuile de la bande "Temps réel" (chiffre XL, courbe sur la
+    dernière heure, assez de points pour suivre un rafraîchissement de 2 s).
+    """
+    style = _PANEL_CSS + _KPI_CSS
+    if live:
+        style += (
+            " .state__value { font-size: 30px !important; } "
+            "ha-card { border-top: 2px solid " + color + "; }"
+        )
     return {
         "type": "custom:mini-graph-card",
         "entities": [{"entity": entity, "color": color}],
         "name": name, "icon": icon,
-        "hours_to_show": 6, "points_per_hour": 12, "line_width": 2,
-        "height": 64, "decimals": decimals, "animate": True,
+        "hours_to_show": 1 if live else 6,
+        "points_per_hour": 120 if live else 12,
+        "line_width": 2, "height": 64 if live else 56, "decimals": decimals,
+        "animate": True,
         "show": {"fill": "fade", "labels": False, "extrema": False,
                  "legend": False, "points": False},
         "grid_options": {"columns": columns},
-        "card_mod": {"style": _PANEL_CSS + _KPI_CSS},
+        "card_mod": {"style": style},
     }
 
 
@@ -262,6 +285,8 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         ),
         "secondary": (
             wan_on("● EN LIGNE", "● WAN COUPÉ") + latency
+            + "{{ '  ·  ◉ TEMPS RÉEL' if is_number(states('" + s("cpu_usage")
+            + "')) else '' }}"
             + "  ·  OPNsense {{ states('" + s("opnsense_version")
             + "').split('-')[0] }}  ·  {{ states('" + s("public_ipv4")
             + "') }}  ·  up " + uptime
@@ -312,12 +337,16 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
             "letter-spacing: 2px; font-size: 11px; color: " + _MUTED + "; }"
         )},
     }
+    # ---- Temps réel : 4 grandes tuiles rafraîchies par le flux OPNsense ----
     traffic = {"type": "grid", "column_span": 2, "cards": [
-        _heading("Trafic", "mdi:swap-vertical"),
-        _kpi(s("wan_throughput_in"), "Entrant", "mdi:arrow-down",
-             _ORANGE, 12, 2),
-        _kpi(s("wan_throughput_out"), "Sortant", "mdi:arrow-up",
-             _ICE, 12, 2),
+        _heading("Temps réel", "mdi:lightning-bolt"),
+        _kpi(s("wan_throughput_in"), "Débit entrant", "mdi:arrow-down",
+             _ORANGE, 6, 1, live=True),
+        _kpi(s("wan_throughput_out"), "Débit sortant", "mdi:arrow-up",
+             _ICE, 6, 1, live=True),
+        _kpi(s("wan_latency"), "Latence", "mdi:timer-outline", _OK, 6, 1,
+             live=True),
+        _kpi(s("cpu_usage"), "CPU", "mdi:cpu-64-bit", _WARN, 6, 0, live=True),
         traffic_chart,
     ]}
 
@@ -328,9 +357,8 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
                  + "' if n | int == 0 else '" + _BAD + "') }}")
     connection = {"type": "grid", "cards": [
         _heading("Connexion", "mdi:pulse"),
-        _kpi(s("wan_latency"), "Latence", "mdi:timer-outline", _ORANGE, 6, 1),
-        _kpi(s("wan_packet_loss"), "Pertes", "mdi:chart-bell-curve", _ICE,
-             6, 1),
+        _kpi(s("wan_packet_loss"), "Pertes de paquets", "mdi:chart-bell-curve",
+             _ICE, 12, 1),
         _template_card(
             "Services",
             n + "{% if not is_number(n) %}Droits API manquants (Status: "
@@ -430,12 +458,7 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "views": [{
             "title": "Pare-feu", "path": "pare-feu", "type": "sections",
             "max_columns": 3,
-            # Fond graphite + halo orange discret en haut à gauche.
-            "background": (
-                "radial-gradient(1200px 520px at 0% 0%, color-mix(in srgb, "
-                + _ORANGE + " 9%, transparent), transparent 70%) fixed, "
-                + _INK
-            ),
+            "background": _BACKGROUND,
             "sections": [
                 {"type": "grid", "column_span": 3, "cards": [hero]},
                 traffic, connection, top, system, vpn, wan_section,
