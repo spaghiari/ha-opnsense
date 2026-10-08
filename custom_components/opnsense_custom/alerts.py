@@ -121,7 +121,8 @@ class OPNsenseAlerts:
     @callback
     def handle_update(self) -> None:
         """Listener du coordinator : évalue les transitions."""
-        data = self.coordinator.data
+        # Vue fusionnée : WAN / latence / tunnels au rythme rapide, le reste lent.
+        data = self.coordinator.merged if self.coordinator.data else None
         if not data or not self.active:
             return
         now = dt_util.utcnow()

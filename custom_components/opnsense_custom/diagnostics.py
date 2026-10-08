@@ -29,10 +29,17 @@ async def async_get_config_entry_diagnostics(
             "data": async_redact_data(dict(entry.data), TO_REDACT),
             "options": dict(entry.options),
         },
-        "resolved_wan_device": (
-            coordinator.data.get("_wan_device") if coordinator.data else None
-        ),
+        "resolved_wan_device": (coordinator.fast.data or {}).get("_wan_device"),
+        "wan_identifier": coordinator.fast.wan_identifier,
+        "refresh": {
+            "slow_interval_s": coordinator.update_interval.total_seconds(),
+            "fast_interval_s": coordinator.fast.update_interval.total_seconds(),
+            "realtime": (
+                coordinator.live.diagnostics() if coordinator.live else "désactivé"
+            ),
+        },
         "coordinator_data": async_redact_data(
-            coordinator.data or {}, TO_REDACT
+            {**(coordinator.data or {}), **(coordinator.fast.data or {})},
+            TO_REDACT,
         ),
     }

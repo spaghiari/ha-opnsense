@@ -288,8 +288,44 @@ def _wan_device_name(data: dict) -> str | None:
     return wan.get("device") if wan else None
 
 
+def _wan_rate(data: dict, direction: str) -> int | None:
+    """Débit WAN, de la source la plus précise à la plus approximative.
+
+    1. flux temps réel OPNsenseLive (moyenne exacte sur quelques secondes) ;
+    2. compteurs d'octets du polling rapide (moyenne depuis le cycle précédent) ;
+    3. somme instantanée des destinations (/traffic/top, polling lent).
+    """
+    key = f"{direction}_bps"
+    live = (data.get("_live") or {}).get("wan")
+    if isinstance(live, dict) and live.get(key) is not None:
+        return live[key]
+    rate = data.get("_wan_rate")
+    if isinstance(rate, dict) and rate.get(key) is not None:
+        return rate[key]
+    return _top_sum_in_bps(data) if direction == "in" else _top_sum_out_bps(data)
+
+
 def _traffic_in_bps(data: dict) -> int | None:
-    """Débit entrant WAN total en bits par seconde (temps réel).
+    return _wan_rate(data, "in")
+
+
+def _traffic_out_bps(data: dict) -> int | None:
+    return _wan_rate(data, "out")
+
+
+def _cpu_usage(data: dict) -> float | None:
+    """CPU utilisé en % (flux temps réel uniquement)."""
+    cpu = (data.get("_live") or {}).get("cpu")
+    if isinstance(cpu, dict):
+        try:
+            return round(float(cpu["total"]), 1)
+        except (KeyError, TypeError, ValueError):
+            return None
+    return None
+
+
+def _top_sum_in_bps(data: dict) -> int | None:
+    """Débit entrant WAN = somme des rate_bits_in des destinations (repli).
 
     L'endpoint /traffic/top/wan renvoie les débits par destination dans
     une liste 'records'. Le débit global = somme des rate_bits_in.
@@ -311,11 +347,8 @@ def _traffic_in_bps(data: dict) -> int | None:
     return total if found else None
 
 
-def _traffic_out_bps(data: dict) -> int | None:
-    """Débit sortant WAN total en bits par seconde (temps réel).
-
-    Même logique : somme des rate_bits_out de toutes les destinations.
-    """
+def _top_sum_out_bps(data: dict) -> int | None:
+    """Débit sortant WAN = somme des rate_bits_out des destinations (repli)."""
     records = _get(data, "traffic_wan", "wan", "records")
     if not isinstance(records, list):
         return None
@@ -769,6 +802,17 @@ SENSOR_DESCRIPTIONS: tuple[tuple[SensorEntityDescription, Callable], ...] = (
     ),
     (
         SensorEntityDescription(
+            key="cpu_usage",
+            translation_key="cpu_usage",
+            icon="mdi:cpu-64-bit",
+            native_unit_of_measurement=PERCENTAGE,
+            state_class=SensorStateClass.MEASUREMENT,
+            suggested_display_precision=1,
+        ),
+        _cpu_usage,
+    ),
+    (
+        SensorEntityDescription(
             key="loadavg_5",
             translation_key="loadavg_5",
             icon="mdi:gauge",
@@ -972,41 +1016,76 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Crée tous les sensors à partir des descriptions ci-dessus."""
-    coordinator: OPNsenseDataCoordinator = hass.data[DOMAIN][entry.entry_id]
+    hub: OPNsenseDataCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities = [
-        OPNsenseSensor(coordinator, entry, description, value_fn)
+        OPNsenseSensor(hub, entry, description, value_fn)
         for description, value_fn in SENSOR_DESCRIPTIONS
     ]
     async_add_entities(entities)
 
 
-class OPNsenseSensor(CoordinatorEntity[OPNsenseDataCoordinator], SensorEntity):
-    """Sensor générique alimenté par le coordinator."""
+# Rythme de rafraîchissement de chaque capteur (les autres : polling lent).
+FAST_SENSORS = {
+    "public_ipv4", "public_ipv6", "wan_status", "wan_total_received",
+    "wan_total_transmitted", "wan_latency", "wan_packet_loss", "vpn_tunnels_up",
+}
+# Temps réel : flux OPNsense, avec repli sur le polling rapide puis lent.
+LIVE_SENSORS = {"wan_throughput_in", "wan_throughput_out", "cpu_usage"}
+
+
+def tier_coordinators(hub: OPNsenseDataCoordinator, key: str) -> list:
+    """Coordinators à écouter pour une entité (le premier est le principal)."""
+    if key in LIVE_SENSORS:
+        return [c for c in (hub.live, hub.fast, hub) if c is not None]
+    if key in FAST_SENSORS:
+        return [hub.fast]
+    return [hub]
+
+
+class OPNsenseSensor(CoordinatorEntity, SensorEntity):
+    """Sensor générique : lit la vue fusionnée, écoute son rythme de refresh."""
 
     _attr_has_entity_name = True
 
     def __init__(
         self,
-        coordinator: OPNsenseDataCoordinator,
+        hub: OPNsenseDataCoordinator,
         entry: ConfigEntry,
         description: SensorEntityDescription,
         value_fn: Callable[[dict], Any],
     ) -> None:
         """Initialise le sensor."""
-        super().__init__(coordinator)
+        coordinators = tier_coordinators(hub, description.key)
+        super().__init__(coordinators[0])
+        self._hub = hub
+        self._extra_coordinators = coordinators[1:]
         self.entity_description = description
         self._value_fn = value_fn
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
         # Toutes les entités rattachées au même appareil firewall
-        self._attr_device_info = build_device_info(entry, coordinator.data)
+        self._attr_device_info = build_device_info(entry, hub.data)
+
+    async def async_added_to_hass(self) -> None:
+        """Écoute aussi les coordinators de repli (temps réel -> rapide -> lent)."""
+        await super().async_added_to_hass()
+        for coordinator in self._extra_coordinators:
+            self.async_on_remove(
+                coordinator.async_add_listener(self._handle_coordinator_update)
+            )
+
+    @property
+    def available(self) -> bool:
+        """Disponible si au moins une de ses sources répond."""
+        return any(
+            c.last_update_success
+            for c in (self.coordinator, *self._extra_coordinators)
+        )
 
     @property
     def native_value(self) -> Any:
-        """Lit la valeur depuis le snapshot du coordinator."""
-        if self.coordinator.data is None:
-            return None
-        return self._value_fn(self.coordinator.data)
+        """Lit la valeur depuis la vue fusionnée des coordinators."""
+        return self._value_fn(self._hub.merged)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
@@ -1016,9 +1095,9 @@ class OPNsenseSensor(CoordinatorEntity[OPNsenseDataCoordinator], SensorEntity):
         complet sous forme de liste consultable depuis Lovelace.
         """
         extractor = ATTRIBUTE_EXTRACTORS.get(self.entity_description.key)
-        if extractor is None or self.coordinator.data is None:
+        if extractor is None:
             return None
         try:
-            return extractor(self.coordinator.data)
+            return extractor(self._hub.merged)
         except Exception:  # noqa: BLE001
             return None

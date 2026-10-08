@@ -12,24 +12,31 @@ from .api import OPNsenseApiClient
 from .const import (
     CONF_API_KEY,
     CONF_API_SECRET,
+    CONF_FAST_INTERVAL,
     CONF_HOST,
+    CONF_LIVE_PUBLISH,
     CONF_PORT,
+    CONF_REALTIME,
     CONF_SCAN_INTERVAL,
     CONF_VERIFY_SSL,
     CONF_WAN_INTERFACE,
+    DEFAULT_FAST_INTERVAL,
+    DEFAULT_LIVE_PUBLISH,
     DEFAULT_PORT,
+    DEFAULT_REALTIME,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     PLATFORMS,
     WAN_AUTO,
 )
-from .coordinator import OPNsenseDataCoordinator
+from .coordinator import OPNsenseDataCoordinator, OPNsenseFastCoordinator
 from .dashboard import (
     async_delete_dashboard,
     async_register_dashboard,
     async_unregister_dashboard,
 )
+from .live import OPNsenseLiveCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,8 +47,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     Étapes :
     1. Récupération des credentials depuis l'entry
     2. Création du client API
-    3. Création du coordinator + premier refresh
-    4. Stockage dans hass.data[DOMAIN][entry_id]
+    3. Création des trois rythmes de rafraîchissement :
+       rapide (interfaces, passerelles, compteurs) -> lent (le reste) ->
+       temps réel (flux OPNsense : débit WAN, CPU %), puis premiers refresh
+    4. Stockage du coordinator principal (lent) dans hass.data[DOMAIN][entry_id]
     5. Forwarding aux plateformes (sensor, button, update...)
     """
     host: str = entry.data[CONF_HOST]
@@ -56,6 +65,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
     )
     wan_interface: str = entry.options.get(CONF_WAN_INTERFACE, WAN_AUTO)
+    fast_interval: int = entry.options.get(CONF_FAST_INTERVAL, DEFAULT_FAST_INTERVAL)
+    realtime: bool = entry.options.get(CONF_REALTIME, DEFAULT_REALTIME)
+    live_publish: int = entry.options.get(CONF_LIVE_PUBLISH, DEFAULT_LIVE_PUBLISH)
 
     session = async_get_clientsession(hass, verify_ssl=verify_ssl)
     client = OPNsenseApiClient(
@@ -67,16 +79,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         verify_ssl=verify_ssl,
     )
 
+    fast = OPNsenseFastCoordinator(
+        hass=hass,
+        client=client,
+        interval=fast_interval,
+        entry=entry,
+        wan_interface=wan_interface,
+    )
     coordinator = OPNsenseDataCoordinator(
         hass=hass,
         client=client,
         scan_interval=scan_interval,
         entry=entry,
-        wan_interface=wan_interface,
+        fast=fast,
     )
 
-    # Premier refresh - si ça échoue, on remonte l'erreur et HA ne charge pas
+    # Premiers refresh - le rapide d'abord : il résout l'interface WAN dont
+    # le lent a besoin (top destinations). Un échec empêche le chargement.
+    await fast.async_config_entry_first_refresh()
     await coordinator.async_config_entry_first_refresh()
+
+    # Flux temps réel (optionnel) : démarre après les premiers refresh pour
+    # connaître l'identifiant du WAN ; s'arrête au déchargement de l'entry.
+    if realtime:
+        live = OPNsenseLiveCoordinator(
+            hass, client, entry, live_publish, lambda: fast.wan_identifier
+        )
+        coordinator.live = live
+        live.start()
+        entry.async_on_unload(live.async_stop)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -95,7 +126,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # rafraîchissement ; le premier appel mémorise l'état de référence.
     alerts = OPNsenseAlerts(hass, entry, coordinator)
     if alerts.active:
-        entry.async_on_unload(coordinator.async_add_listener(alerts.handle_update))
+        for source in (fast, coordinator):
+            entry.async_on_unload(source.async_add_listener(alerts.handle_update))
         alerts.handle_update()
 
     return True

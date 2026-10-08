@@ -61,9 +61,12 @@
     "step": {
       "init": {
         "title": "Options OPNsense",
-        "description": "Modifie la fréquence de rafraîchissement, l'interface WAN et le dashboard de la barre latérale.",
+        "description": "Le rafraîchissement fonctionne à trois vitesses : temps réel (flux poussés par OPNsense), polling rapide et polling lent. Choisis aussi l'interface WAN et le dashboard de la barre latérale.",
         "data": {
-          "scan_interval": "Intervalle de polling (secondes)",
+          "scan_interval": "Rafraîchissement lent : firmware, système, disque, services (secondes)",
+          "realtime": "Temps réel : débit WAN et CPU % poussés par OPNsense",
+          "live_publish": "Temps réel : mettre à jour Home Assistant toutes les (secondes)",
+          "fast_interval": "Rafraîchissement rapide : WAN, latence, tunnels VPN, compteurs (secondes)",
           "wan_interface": "Interface WAN",
           "create_dashboard": "Créer un dashboard OPNsense dans la barre latérale"
         }
@@ -101,6 +104,7 @@
       "loadavg_1": { "name": "Charge CPU 1 min" },
       "loadavg_5": { "name": "Charge CPU 5 min" },
       "loadavg_15": { "name": "Charge CPU 15 min" },
+      "cpu_usage": { "name": "CPU utilisé" },
       "public_ipv4": { "name": "IP publique IPv4" },
       "public_ipv6": { "name": "IP publique IPv6" },
       "wan_status": { "name": "Statut WAN" },

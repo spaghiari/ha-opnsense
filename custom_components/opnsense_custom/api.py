@@ -2,13 +2,25 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import aiohttp
 from aiohttp import BasicAuth, ClientError, ClientTimeout
 
-from .const import API_ENDPOINTS, DEFAULT_WAN_IDENTIFIER, HTTP_TIMEOUT
+from .const import (
+    API_ENDPOINTS,
+    DEFAULT_WAN_IDENTIFIER,
+    FAST_ENDPOINTS,
+    HTTP_TIMEOUT,
+    SLOW_ENDPOINTS,
+)
+
+# Flux continus : pas de durée totale, mais au moins un événement attendu
+# toutes les STREAM_READ_TIMEOUT secondes (OPNsense en pousse un par seconde).
+STREAM_READ_TIMEOUT = 20
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +69,8 @@ class OPNsenseApiClient:
         # Endpoints déjà signalés comme interdits (403) : on ne re-loggue pas
         # l'avertissement à chaque polling, seulement au premier refus.
         self._forbidden_logged: set[str] = set()
+        # Endpoints en échec (hors 403) depuis le dernier succès.
+        self._failing: set[str] = set()
 
     async def _request(
         self,
@@ -126,29 +140,20 @@ class OPNsenseApiClient:
         return await self.get("system_information")
 
     async def async_get_all(
-        self, wan_identifier: str = DEFAULT_WAN_IDENTIFIER
+        self,
+        wan_identifier: str = DEFAULT_WAN_IDENTIFIER,
+        keys: Sequence[str] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """Récupère toutes les données en parallèle pour le coordinator.
+        """Récupère en parallèle les endpoints demandés pour un coordinator.
 
         `wan_identifier` : identifiant de config OPNsense de l'interface WAN
         ("wan", "opt1"...) utilisé pour le débit temps réel / top destinations.
+        `keys` : endpoints à interroger (par défaut : tous ceux du polling).
 
         Renvoie un dict avec une clé par endpoint. Si un endpoint échoue,
         sa valeur sera None et l'erreur est loggée (les autres continuent).
         """
-        keys = [
-            "firmware_status",
-            "system_information",
-            "system_resources",
-            "system_disk",
-            "system_time",
-            "cpu_type",
-            "interfaces",
-            "traffic_totals",
-            "traffic_wan",
-            "gateway_status",
-            "services",
-        ]
+        keys = list(keys or (*FAST_ENDPOINTS, *SLOW_ENDPOINTS))
         tasks = [
             self.get(key, iface=wan_identifier) if key == "traffic_wan"
             else self.get(key)
@@ -173,17 +178,67 @@ class OPNsenseApiClient:
                     )
                 data[key] = None
             elif isinstance(result, Exception):
-                _LOGGER.warning(
-                    "Échec de récupération de '%s': %s", key, result
-                )
+                # Polling rapide : un avertissement au début d'une série
+                # d'échecs, pas à chaque cycle.
+                if key not in self._failing:
+                    self._failing.add(key)
+                    _LOGGER.warning(
+                        "Échec de récupération de '%s': %s", key, result
+                    )
                 data[key] = None
             else:
+                if key in self._failing:
+                    self._failing.discard(key)
+                    _LOGGER.info("'%s' de nouveau disponible", key)
                 data[key] = result
 
         # NB : on ne lève pas ici si tout est None. Le coordinator vérifie
         # `system_information` et remonte un UpdateFailed explicite
         # ("vérifier les privilèges"), message plus juste qu'un "injoignable".
         return data
+
+    async def async_stream(
+        self, endpoint_key: str, **params: str
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Lit un flux continu OPNsense (Server-Sent Events) événement par événement.
+
+        Chaque ligne `data: {...}` est décodée en JSON et renvoyée. Lève les
+        mêmes exceptions typées que `_request` (401 / 403 / autre) ; une
+        coupure ou un silence prolongé lève OPNsenseApiError.
+        """
+        path = API_ENDPOINTS[endpoint_key].format(**params)
+        timeout = ClientTimeout(
+            total=None, sock_connect=HTTP_TIMEOUT, sock_read=STREAM_READ_TIMEOUT
+        )
+        try:
+            async with self._session.get(
+                f"{self._base_url}{path}",
+                auth=self._auth,
+                ssl=self._verify_ssl,
+                timeout=timeout,
+                headers={"Accept": "text/event-stream"},
+            ) as response:
+                if response.status == 401:
+                    raise OPNsenseAuthError("Authentification refusée")
+                if response.status == 403:
+                    raise OPNsenseForbiddenError(f"Accès refusé sur {path}")
+                if response.status >= 400:
+                    raise OPNsenseApiError(f"Erreur HTTP {response.status} sur {path}")
+                async for raw in response.content:
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    try:
+                        payload = json.loads(line[5:].strip())
+                    except ValueError:
+                        continue
+                    if isinstance(payload, dict):
+                        yield payload
+        except TimeoutError as err:
+            raise OPNsenseApiError(f"Flux {path} silencieux") from err
+        except ClientError as err:
+            raise OPNsenseApiError(f"Flux {path} interrompu: {err}") from err
+        raise OPNsenseApiError(f"Flux {path} fermé par OPNsense")
 
     async def async_check_for_updates(self) -> dict[str, Any]:
         """Force OPNsense à vérifier la disponibilité de mises à jour.

@@ -38,27 +38,37 @@ from .const import (
     CONF_API_KEY,
     CONF_API_SECRET,
     CONF_CREATE_DASHBOARD,
+    CONF_FAST_INTERVAL,
     CONF_HOST,
     CONF_LATENCY_DURATION,
     CONF_LATENCY_THRESHOLD,
+    CONF_LIVE_PUBLISH,
     CONF_NOTIFY_PERSISTENT,
     CONF_NOTIFY_TARGETS,
     CONF_PORT,
+    CONF_REALTIME,
     CONF_SCAN_INTERVAL,
     CONF_VERIFY_SSL,
     CONF_WAN_DOWN_DELAY,
     CONF_WAN_INTERFACE,
     DEFAULT_ALERTS,
     DEFAULT_CREATE_DASHBOARD,
+    DEFAULT_FAST_INTERVAL,
     DEFAULT_LATENCY_DURATION,
     DEFAULT_LATENCY_THRESHOLD,
+    DEFAULT_LIVE_PUBLISH,
     DEFAULT_NOTIFY_PERSISTENT,
     DEFAULT_PORT,
+    DEFAULT_REALTIME,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_VERIFY_SSL,
     DEFAULT_WAN_DOWN_DELAY,
     DOMAIN,
+    MAX_FAST_INTERVAL,
+    MAX_LIVE_PUBLISH,
     MAX_SCAN_INTERVAL,
+    MIN_FAST_INTERVAL,
+    MIN_LIVE_PUBLISH,
     MIN_SCAN_INTERVAL,
     WAN_AUTO,
 )
@@ -331,10 +341,28 @@ class OPNsenseOptionsFlow(OptionsFlow):
             self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
         )
         if coordinator is not None and coordinator.data:
-            rows = (coordinator.data.get("interfaces") or {}).get("rows")
+            # Les interfaces sont lues par le polling rapide (vue fusionnée).
+            rows = (coordinator.merged.get("interfaces") or {}).get("rows")
 
+        opts = self._entry.options
         options_schema = vol.Schema(
             {
+                vol.Required(
+                    CONF_REALTIME,
+                    default=opts.get(CONF_REALTIME, DEFAULT_REALTIME),
+                ): bool,
+                vol.Required(
+                    CONF_LIVE_PUBLISH,
+                    default=opts.get(CONF_LIVE_PUBLISH, DEFAULT_LIVE_PUBLISH),
+                ): vol.All(
+                    int, vol.Range(min=MIN_LIVE_PUBLISH, max=MAX_LIVE_PUBLISH)
+                ),
+                vol.Required(
+                    CONF_FAST_INTERVAL,
+                    default=opts.get(CONF_FAST_INTERVAL, DEFAULT_FAST_INTERVAL),
+                ): vol.All(
+                    int, vol.Range(min=MIN_FAST_INTERVAL, max=MAX_FAST_INTERVAL)
+                ),
                 vol.Required(
                     CONF_SCAN_INTERVAL, default=current_interval
                 ): vol.All(

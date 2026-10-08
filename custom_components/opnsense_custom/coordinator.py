@@ -4,6 +4,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 from datetime import timedelta
+from time import monotonic
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -20,7 +21,9 @@ from .const import (
     DEFAULT_MODEL,
     DEFAULT_WAN_IDENTIFIER,
     DOMAIN,
+    FAST_ENDPOINTS,
     MANUFACTURER,
+    SLOW_ENDPOINTS,
     WAN_AUTO,
 )
 
@@ -118,12 +121,98 @@ def build_device_info(entry: ConfigEntry, data: dict | None) -> DeviceInfo:
     )
 
 
-class OPNsenseDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinator qui appelle async_get_all() périodiquement.
+def _wan_counters(data: dict) -> tuple[int, int] | None:
+    """Compteurs d'octets (reçus, émis) de l'interface WAN résolue."""
+    device = data.get("_wan_device")
+    interfaces = (data.get("traffic_totals") or {}).get("interfaces")
+    if not device or not isinstance(interfaces, dict):
+        return None
+    for iface in interfaces.values():
+        if isinstance(iface, dict) and iface.get("device") == device:
+            try:
+                return (int(iface["bytes received"]),
+                        int(iface["bytes transmitted"]))
+            except (KeyError, TypeError, ValueError):
+                return None
+    return None
 
-    Toutes les entités (sensors, binary_sensors, update) lisent
-    self.data pour leurs valeurs. Évite que chaque entité fasse
-    son propre appel HTTP.
+
+class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Polling rapide : interfaces, passerelles et compteurs WAN.
+
+    Résout l'interface WAN (device + identifiant de config) et calcule un
+    débit moyen exact à partir des compteurs d'octets (différence / temps),
+    utilisé quand le flux temps réel n'est pas disponible.
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        client: OPNsenseApiClient,
+        interval: int,
+        entry: ConfigEntry,
+        wan_interface: str = WAN_AUTO,
+    ) -> None:
+        """Initialise le coordinator rapide."""
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"{DOMAIN}_{entry.entry_id}_fast",
+            update_interval=timedelta(seconds=interval),
+        )
+        self.client = client
+        self.entry = entry
+        self.wan_interface = wan_interface
+        self.wan_identifier = DEFAULT_WAN_IDENTIFIER
+        self._prev_counters: tuple[float, int, int] | None = None
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Appelé toutes les `fast_interval` secondes."""
+        try:
+            data = await self.client.async_get_all(keys=FAST_ENDPOINTS)
+        except OPNsenseAuthError as err:
+            raise ConfigEntryAuthFailed(
+                "Clé API OPNsense invalide - reconfiguration nécessaire"
+            ) from err
+        except OPNsenseApiError as err:
+            raise UpdateFailed(f"Erreur API OPNsense: {err}") from err
+        if data.get("interfaces") is None:
+            raise UpdateFailed(
+                "Impossible de récupérer les interfaces - vérifier les privilèges API"
+            )
+
+        rows = (data.get("interfaces") or {}).get("rows")
+        data["_wan_device"] = resolve_wan_device(rows, self.wan_interface)
+        identifier = (find_wan_row(data) or {}).get("identifier")
+        if identifier:
+            self.wan_identifier = identifier
+        data["_wan_identifier"] = self.wan_identifier
+
+        # Débit moyen depuis le cycle précédent, à partir des compteurs.
+        data["_wan_rate"] = None
+        counters = _wan_counters(data)
+        now = monotonic()
+        if counters is not None:
+            if self._prev_counters is not None:
+                t0, rx0, tx0 = self._prev_counters
+                elapsed = now - t0
+                drx, dtx = counters[0] - rx0, counters[1] - tx0
+                # Compteurs remis à zéro (reboot) : on saute ce cycle.
+                if elapsed > 0 and drx >= 0 and dtx >= 0:
+                    data["_wan_rate"] = {
+                        "in_bps": int(drx * 8 / elapsed),
+                        "out_bps": int(dtx * 8 / elapsed),
+                    }
+            self._prev_counters = (now, counters[0], counters[1])
+        return data
+
+
+class OPNsenseDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Polling lent : firmware, système, disque, services, top destinations.
+
+    C'est l'objet "principal" de l'entry (stocké dans hass.data) : il porte
+    aussi le coordinator rapide (`fast`) et le flux temps réel (`live`), et
+    expose `merged`, la vue fusionnée lue par toutes les entités.
     """
 
     def __init__(
@@ -132,9 +221,9 @@ class OPNsenseDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         client: OPNsenseApiClient,
         scan_interval: int,
         entry: ConfigEntry,
-        wan_interface: str = WAN_AUTO,
+        fast: OPNsenseFastCoordinator,
     ) -> None:
-        """Initialise le coordinator avec un intervalle de polling."""
+        """Initialise le coordinator lent."""
         super().__init__(
             hass,
             _LOGGER,
@@ -143,63 +232,43 @@ class OPNsenseDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.client = client
         self.entry = entry
-        self.wan_interface = wan_interface
-        # Identifiant de config OPNsense du WAN ("wan", "opt1"...), appris au
-        # fil des cycles pour interroger le bon endpoint traffic/top/{iface}.
-        self._wan_identifier = DEFAULT_WAN_IDENTIFIER
+        self.fast = fast
+        self.live: Any = None  # OPNsenseLiveCoordinator, posé par __init__.py
+
+    @property
+    def merged(self) -> dict[str, Any]:
+        """Vue fusionnée lent + rapide + temps réel (s'il est frais)."""
+        merged: dict[str, Any] = dict(self.data or {})
+        merged.update(self.fast.data or {})
+        if self.live is not None:
+            merged["_live"] = self.live.fresh_data()
+        return merged
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Appelé automatiquement toutes les `scan_interval` secondes."""
+        """Appelé toutes les `scan_interval` secondes."""
+        identifier = self.fast.wan_identifier
         try:
-            data = await self.client.async_get_all(self._wan_identifier)
+            data = await self.client.async_get_all(identifier, keys=SLOW_ENDPOINTS)
         except OPNsenseAuthError as err:
-            # Clé API invalide/révoquée : déclenche le flux de ré-authentification
             raise ConfigEntryAuthFailed(
                 "Clé API OPNsense invalide - reconfiguration nécessaire"
             ) from err
         except OPNsenseApiError as err:
             raise UpdateFailed(f"Erreur API OPNsense: {err}") from err
 
-        # On vérifie qu'on a au moins les infos système, sinon ça ne sert à rien
         if data.get("system_information") is None:
             raise UpdateFailed(
                 "Impossible de récupérer system_information - "
                 "vérifier les privilèges API"
             )
 
-        # Résout une fois par cycle le device WAN et l'injecte pour les entités
-        rows = (data.get("interfaces") or {}).get("rows")
-        data["_wan_device"] = resolve_wan_device(rows, self.wan_interface)
-
-        # Le WAN ne s'appelle pas forcément "wan" côté config OPNsense : si son
-        # identifiant réel diffère de celui interrogé, on refait l'appel trafic
-        # tout de suite (une seule fois, ensuite l'identifiant est mémorisé).
-        wan_row = find_wan_row(data)
-        identifier = (wan_row or {}).get("identifier")
-        if identifier and identifier != self._wan_identifier:
-            self._wan_identifier = identifier
-            try:
-                data["traffic_wan"] = await self.client.get(
-                    "traffic_wan", iface=identifier
-                )
-            except OPNsenseAuthError as err:
-                raise ConfigEntryAuthFailed(
-                    "Clé API OPNsense invalide - reconfiguration nécessaire"
-                ) from err
-            except OPNsenseApiError as err:
-                _LOGGER.debug("Trafic WAN '%s' indisponible: %s", identifier, err)
-                data["traffic_wan"] = None
-
-        # La réponse est indexée par l'identifiant d'interface : on la ramène
-        # sous la clé "wan" attendue par les capteurs.
+        # La réponse top/{iface} est indexée par l'identifiant d'interface :
+        # on la ramène sous la clé "wan" attendue par les capteurs.
         traffic = data.get("traffic_wan")
         if (
             isinstance(traffic, dict)
-            and self._wan_identifier != DEFAULT_WAN_IDENTIFIER
-            and self._wan_identifier in traffic
+            and identifier != DEFAULT_WAN_IDENTIFIER
+            and identifier in traffic
         ):
-            data["traffic_wan"] = {
-                DEFAULT_WAN_IDENTIFIER: traffic[self._wan_identifier]
-            }
-
+            data["traffic_wan"] = {DEFAULT_WAN_IDENTIFIER: traffic[identifier]}
         return data

@@ -51,14 +51,29 @@ DASHBOARD_URL_PATH = "opnsense"
 # Version du gabarit de dashboard. Incrémenter pour re-semer le design
 # par défaut au prochain chargement (les éditions manuelles seront alors
 # remplacées - le dashboard auto est "géré" par l'intégration).
-DASHBOARD_TEMPLATE_VERSION = 5
+DASHBOARD_TEMPLATE_VERSION = 6
 
 # Valeurs par défaut
 DEFAULT_PORT = 443
 DEFAULT_VERIFY_SSL = False
+# Rafraîchissement à trois vitesses :
+#   - lent (CONF_SCAN_INTERVAL) : firmware, système, disque, services, top ;
+#   - rapide (CONF_FAST_INTERVAL) : interfaces, passerelles, compteurs WAN ;
+#   - temps réel (CONF_REALTIME) : flux continus OPNsense (débit, CPU %),
+#     publiés dans HA toutes les CONF_LIVE_PUBLISH secondes.
 DEFAULT_SCAN_INTERVAL = 60
 MIN_SCAN_INTERVAL = 30
 MAX_SCAN_INTERVAL = 600
+CONF_FAST_INTERVAL = "fast_interval"
+DEFAULT_FAST_INTERVAL = 10
+MIN_FAST_INTERVAL = 2
+MAX_FAST_INTERVAL = 60
+CONF_REALTIME = "realtime"
+DEFAULT_REALTIME = True
+CONF_LIVE_PUBLISH = "live_publish"
+DEFAULT_LIVE_PUBLISH = 2
+MIN_LIVE_PUBLISH = 1
+MAX_LIVE_PUBLISH = 30
 # Valeur sentinelle "laisser l'intégration auto-détecter le WAN"
 WAN_AUTO = "__auto__"
 
@@ -84,7 +99,18 @@ API_ENDPOINTS = {
     # sans eux, seuls les capteurs latence/pertes/services restent vides.
     "gateway_status": "/api/routes/gateway/status",
     "services": "/api/core/service/search",
+    # Flux continus (Server-Sent Events) utilisés par le dashboard OPNsense :
+    # octets par interface depuis l'événement précédent / CPU en %.
+    "traffic_stream": "/api/diagnostics/traffic/stream/{interval}",
+    "cpu_stream": "/api/diagnostics/cpu_usage/stream",
 }
+
+# Répartition des endpoints entre les deux coordinators de polling.
+FAST_ENDPOINTS = ("interfaces", "gateway_status", "traffic_totals")
+SLOW_ENDPOINTS = (
+    "firmware_status", "system_information", "system_resources",
+    "system_disk", "system_time", "cpu_type", "traffic_wan", "services",
+)
 
 # Identifiant de config OPNsense par défaut de l'interface WAN (avant la
 # première résolution par le coordinator).

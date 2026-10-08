@@ -1,6 +1,8 @@
 """Binary sensors OPNsense custom."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
@@ -53,31 +55,35 @@ async def async_setup_entry(
     """Crée les binary sensors."""
     coordinator: OPNsenseDataCoordinator = hass.data[DOMAIN][entry.entry_id]
 
+    # Le WAN est suivi au rythme du polling rapide ; la MAJ au rythme lent.
+    # Les infos d'appareil viennent toujours du coordinator principal
+    # (version du firmware), quel que soit le coordinator écouté.
     entities = [
         OPNsenseUpdateAvailableBinary(coordinator, entry),
-        OPNsenseWanUpBinary(coordinator, entry),
+        OPNsenseWanUpBinary(coordinator.fast, entry, coordinator.data),
     ]
     async_add_entities(entities)
 
 
-class _OPNsenseBinaryBase(
-    CoordinatorEntity[OPNsenseDataCoordinator], BinarySensorEntity
-):
+class _OPNsenseBinaryBase(CoordinatorEntity, BinarySensorEntity):
     """Base partagée pour les binary sensors."""
 
     _attr_has_entity_name = True
 
     def __init__(
         self,
-        coordinator: OPNsenseDataCoordinator,
+        coordinator: Any,
         entry: ConfigEntry,
         description: BinarySensorEntityDescription,
+        device_data: dict | None = None,
     ) -> None:
         """Initialise."""
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        self._attr_device_info = build_device_info(entry, coordinator.data)
+        self._attr_device_info = build_device_info(
+            entry, device_data if device_data is not None else coordinator.data
+        )
 
 
 class OPNsenseUpdateAvailableBinary(_OPNsenseBinaryBase):
@@ -110,16 +116,17 @@ class OPNsenseWanUpBinary(_OPNsenseBinaryBase):
 
     def __init__(
         self,
-        coordinator: OPNsenseDataCoordinator,
+        coordinator: Any,
         entry: ConfigEntry,
+        device_data: dict | None = None,
     ) -> None:
-        """Initialise."""
+        """Initialise (coordinator = polling rapide)."""
         description = BinarySensorEntityDescription(
             key="wan_connected",
             translation_key="wan_connected",
             device_class=BinarySensorDeviceClass.CONNECTIVITY,
         )
-        super().__init__(coordinator, entry, description)
+        super().__init__(coordinator, entry, description, device_data)
 
     @property
     def is_on(self) -> bool | None:

@@ -61,9 +61,12 @@
     "step": {
       "init": {
         "title": "OPNsense options",
-        "description": "Adjust the data refresh rate, the WAN interface and the sidebar dashboard.",
+        "description": "Refresh runs at three speeds: real-time (live streams from OPNsense), fast and slow polling. Also pick the WAN interface and the sidebar dashboard.",
         "data": {
-          "scan_interval": "Polling interval (seconds)",
+          "scan_interval": "Slow refresh: firmware, system, disk, services (seconds)",
+          "realtime": "Real-time: WAN throughput and CPU % pushed by OPNsense",
+          "live_publish": "Real-time: update Home Assistant every (seconds)",
+          "fast_interval": "Fast refresh: WAN, latency, VPN tunnels, counters (seconds)",
           "wan_interface": "WAN interface",
           "create_dashboard": "Create an OPNsense dashboard in the sidebar"
         }
@@ -101,6 +104,7 @@
       "loadavg_1": { "name": "CPU load 1 min" },
       "loadavg_5": { "name": "CPU load 5 min" },
       "loadavg_15": { "name": "CPU load 15 min" },
+      "cpu_usage": { "name": "CPU usage" },
       "public_ipv4": { "name": "Public IPv4" },
       "public_ipv6": { "name": "Public IPv6" },
       "wan_status": { "name": "WAN status" },
