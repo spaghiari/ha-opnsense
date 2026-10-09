@@ -712,7 +712,12 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
             "sections": [
                 {"type": "grid", "column_span": 3, "cards": [hero]},
                 *wan_section,
-                live, side, top, vpn,
+                # Deux colonnes qui s'écoulent chacune de leur côté : une
+                # section par rangée laisserait un trou sous la plus courte
+                # (le top destinations attendait le bas de la colonne Système).
+                {"type": "grid", "column_span": 2,
+                 "cards": live["cards"] + top["cards"]},
+                {"type": "grid", "cards": side["cards"] + vpn["cards"]},
             ],
         }],
     }
