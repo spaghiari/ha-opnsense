@@ -185,7 +185,7 @@ Le dashboard par défaut utilise ces cartes custom - installe-les depuis
 
 | Carte | Nom HACS |
 |---|---|
-| Mushroom | `Mushroom` |
+| button-card | `button-card` |
 | ApexCharts Card | `apexcharts-card` |
 | Mini Graph Card | `mini-graph-card` |
 | card-mod | `card-mod` |

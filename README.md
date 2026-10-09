@@ -184,7 +184,7 @@ Frontend** (one-time) for the intended look:
 
 | Card | HACS name |
 |---|---|
-| Mushroom | `Mushroom` |
+| button-card | `button-card` |
 | ApexCharts Card | `apexcharts-card` |
 | Mini Graph Card | `mini-graph-card` |
 | card-mod | `card-mod` |

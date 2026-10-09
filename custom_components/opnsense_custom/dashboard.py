@@ -15,7 +15,7 @@ ou d'une icône) ; entrant / sortant restent une paire complémentaire.
 Points clés :
   * Cartes construites à partir des VRAIS entity_id lus dans le registre
     (via le suffixe d'unique_id) -> indépendant de la langue de l'UI.
-  * Cartes HACS : Mushroom, apexcharts-card, mini-graph-card et card-mod.
+  * Cartes HACS : button-card, apexcharts-card, mini-graph-card et card-mod.
     Si elles manquent, un avertissement est loggé (cf. README).
   * Best-effort et défensif : toute erreur est loggée et n'interrompt JAMAIS
     le chargement de l'intégration (l'API lovelace utilisée est semi-privée).
@@ -26,6 +26,7 @@ Points clés :
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -47,7 +48,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Cartes frontend (HACS) requises par le design par défaut.
 REQUIRED_RESOURCES = (
-    "lovelace-mushroom",
+    "button-card",
     "apexcharts-card",
     "mini-graph-card",
     "card-mod",
@@ -72,7 +73,7 @@ THEMES: dict[str, dict[str, Any]] = {
         "radius": 12, "blur": None, "shadow": "none",
         "hero_bg": "#16191d", "hero_line": "#22252b",
         "font_label": _SYS, "font_num": _MONO, "font_display": _SYS,
-        "name_track": "0.5px", "kpi_size": 28, "kpi_bar": False,
+        "name_track": "0.5px", "kpi_size": 28, "kpi_bar": False, "bar_o": 0.14,
     },
     "aurore": {
         "background": (
@@ -95,7 +96,7 @@ THEMES: dict[str, dict[str, Any]] = {
         ),
         "hero_line": "rgba(255,255,255,0.12)",
         "font_label": _SYS, "font_num": _SYS, "font_display": _SYS,
-        "name_track": "1px", "kpi_size": 30, "kpi_bar": False,
+        "name_track": "1px", "kpi_size": 30, "kpi_bar": False, "bar_o": 0.18,
     },
     "cockpit": {
         "background": "#0d131c",
@@ -106,7 +107,7 @@ THEMES: dict[str, dict[str, Any]] = {
         "radius": 6, "blur": None, "shadow": "none",
         "hero_bg": "#121a25", "hero_line": "#1d2734",
         "font_label": _MONO, "font_num": _MONO, "font_display": _MONO,
-        "name_track": "3px", "kpi_size": 32, "kpi_bar": True,
+        "name_track": "3px", "kpi_size": 32, "kpi_bar": True, "bar_o": 0.16,
     },
 }
 
@@ -122,7 +123,7 @@ def _theme(entry: ConfigEntry) -> tuple[str, dict[str, Any]]:
 # ---- Fragments de style (card-mod) ----
 
 def _panel(th: dict) -> str:
-    """Surface d'une carte selon le thème."""
+    """Surface d'une carte selon le thème (card-mod)."""
     blur = (
         f"backdrop-filter: {th['blur']}; -webkit-backdrop-filter: {th['blur']}; "
         if th["blur"] else ""
@@ -133,39 +134,6 @@ def _panel(th: dict) -> str:
         "box-shadow: " + th["shadow"] + "; " + blur
         + "--primary-text-color: " + th["text"] + "; "
         "--secondary-text-color: " + th["muted"] + "; } "
-    )
-
-
-def _icon(color: str) -> str:
-    """Couleur d'icône Mushroom (couleur littérale ou expression Jinja)."""
-    return (
-        "mushroom-shape-icon { --icon-color: " + color + " !important; "
-        "--shape-color: color-mix(in srgb, " + color + " 15%, transparent) "
-        "!important; } "
-    )
-
-
-def _nums(th: dict) -> str:
-    """Chiffres alignés dans la police des valeurs du thème."""
-    return (
-        ".primary { font-family: " + th["font_num"] + "; "
-        "font-variant-numeric: tabular-nums; } .secondary { font-family: "
-        + th["font_label"] + "; } "
-    )
-
-
-def _meter(th: dict, tone: str, pct: str) -> str:
-    """Jauge en liseré au ras du bord bas ; `pct` est une expression Jinja.
-
-    Hors du flux : elle ne chevauche pas le texte et ne décale pas le contenu.
-    """
-    return (
-        "{% set p = [[(" + pct + ") | float(0), 0] | max, 100] | min %}"
-        "ha-card { position: relative; overflow: hidden; } "
-        "ha-card::after { content: ''; position: absolute; left: 0; "
-        "right: 0; bottom: 0; height: 4px; pointer-events: none; "
-        "background: linear-gradient(90deg, " + tone + " {{ p }}%, "
-        + th["track"] + " {{ p }}%); } "
     )
 
 
@@ -180,105 +148,223 @@ def _entity_map(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, str]:
     return mapping
 
 
+# ---- Cartes HTML (button-card) ----
+# La maquette demande des mises en page (étiquette à gauche / valeur à droite,
+# pastilles, jauges arrondies, carré de rang teinté) que les cartes Mushroom
+# ne savent pas faire : on rend ces cartes en HTML via button-card. Le code JS
+# est évalué côté navigateur à chaque changement d'état des entités suivies.
+
+# Fonctions communes injectées en tête de chaque gabarit JS.
+_JS_LIB = (
+    "const S=(e)=>{const o=states[e];return o?o.state:'unavailable';};"
+    "const N=(e)=>parseFloat(S(e));"
+    "const A=(e,a)=>{const o=states[e];"
+    "return o&&o.attributes?o.attributes[a]:undefined;};"
+    "const soft=(c,p)=>`color-mix(in srgb, ${c} ${p||15}%, transparent)`;"
+    "const fr=(v,d)=>isNaN(v)?'–':Number(v).toLocaleString('fr-FR',"
+    "{minimumFractionDigits:d,maximumFractionDigits:d});"
+    "const esc=(s)=>String(s==null?'':s).replace(/[&<>\"]/g,(c)=>"
+    "({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));"
+    "const pill=(t,c,live)=>`<span style=\"display:inline-flex;align-items:center;"
+    "gap:6px;padding:2px 9px;border-radius:999px;font:600 11.5px ${T.sys};"
+    "background:${soft(c)};color:${c};white-space:nowrap\"><i class=\"${live?'lv':''}\""
+    " style=\"width:7px;height:7px;border-radius:50%;background:currentColor\"></i>"
+    "${t}</span>`;"
+    "const meter=(p,c)=>`<div style=\"height:6px;border-radius:99px;"
+    "background:${T.track};overflow:hidden;margin-top:8px\"><i style=\"display:block;"
+    "height:100%;width:${Math.max(0,Math.min(100,p||0))}%;border-radius:inherit;"
+    "background:${c}\"></i></div>`;"
+    "const lab=(t)=>`<span style=\"font:600 11px ${T.lf};letter-spacing:1.2px;"
+    "text-transform:uppercase;color:${T.muted}\">${t}</span>`;"
+    "const row2=(title,badge,left,right)=>`<div style=\"padding:14px 16px\">"
+    "<div style=\"display:flex;justify-content:space-between;align-items:center;"
+    "gap:10px\"><b style=\"font:600 13px ${T.sys}\">${title}</b>${badge}</div>"
+    "<div style=\"display:flex;justify-content:space-between;gap:10px;margin-top:6px;"
+    "font:500 12px ${T.sys};color:${T.muted}\"><span style=\"white-space:nowrap\">"
+    "${left}</span><span style=\"min-width:0;overflow:hidden;text-overflow:ellipsis;"
+    "white-space:nowrap;text-align:right\">${esc(right)}</span></div></div>`;"
+    "const ico=(inner,c)=>`<span style=\"position:relative;width:32px;height:32px;"
+    "border-radius:9px;display:grid;place-items:center;flex:none;"
+    "font:700 12px ${T.fn};background:${soft(c)};color:${c}\">${inner}</span>`;"
+    "const item=(icon,name,sub,right,rc)=>`<div style=\"position:relative;"
+    "display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;"
+    "align-items:center;padding:10px 14px\">${icon}<span style=\"position:relative;"
+    "min-width:0\"><b style=\"display:block;font:600 13px ${T.sys};white-space:nowrap;"
+    "overflow:hidden;text-overflow:ellipsis\">${esc(name)}</b>"
+    "<span style=\"display:block;"
+    "font:500 11.5px ${T.mono};color:${T.muted};white-space:nowrap;overflow:hidden;"
+    "text-overflow:ellipsis\">${esc(sub)||'&nbsp;'}</span></span><span style=\""
+    "position:relative;font:600 12.5px ${T.fn};font-variant-numeric:tabular-nums;"
+    "color:${rc||T.text};white-space:nowrap\">${right}</span></div>`;"
+)
+
+
+def _tokens(th: dict) -> str:
+    """Tokens du thème exposés au JS sous le nom `T`."""
+    keys = ("text", "muted", "track", "accent", "in", "out", "ok", "warn", "bad",
+            "bar_o", "name_track")
+    tokens = {k: th[k] for k in keys}
+    tokens.update(sys=_SYS, mono=_MONO, lf=th["font_label"], fn=th["font_num"],
+                  fd=th["font_display"])
+    return "const T=" + json.dumps(tokens, ensure_ascii=False) + ";"
+
+
+def _js(th: dict, code: str, **subs: Any) -> str:
+    """Gabarit button-card ; `@NOM@` est remplacé par la valeur JSON-échappée."""
+    for key, value in subs.items():
+        code = code.replace(f"@{key}@", json.dumps(value, ensure_ascii=False))
+    return "[[[ " + _tokens(th) + _JS_LIB + code + " ]]]"
+
+
+def _html(th: dict, js: str, watch: list[str], columns: Any = 12,
+          entity: str | None = None, hero: bool = False,
+          hide: str | None = None, **extra: Any) -> dict:
+    """Carte button-card dont tout le contenu est un champ HTML `c`.
+
+    `hide` : condition Jinja (card-mod) qui retire la carte de la mise en page.
+    """
+    card_style = [
+        {"padding": "0"},
+        {"background": th["hero_bg"] if hero else th["card"]},
+        {"border": "1px solid " + (th["hero_line"] if hero else th["line"])},
+        {"border-radius": f"{th['radius']}px"},
+        {"box-shadow": th["shadow"]},
+        {"overflow": "hidden"}, {"color": th["text"]},
+        {"font-family": _SYS}, {"text-align": "left"},
+    ]
+    if th["blur"]:
+        card_style += [{"backdrop-filter": th["blur"]},
+                       {"-webkit-backdrop-filter": th["blur"]}]
+    card: dict[str, Any] = {
+        "type": "custom:button-card",
+        "show_name": False, "show_icon": False, "show_state": False,
+        "show_label": False,
+        "triggers_update": watch,
+        "custom_fields": {"c": js},
+        "styles": {
+            "card": card_style,
+            "grid": [{"grid-template-areas": '"c"'},
+                     {"grid-template-columns": "minmax(0, 1fr)"},
+                     {"grid-template-rows": "auto"}],
+            "custom_fields": {"c": [{"min-width": "0"}, {"width": "100%"}]},
+        },
+        "tap_action": {"action": "more-info"} if entity else {"action": "none"},
+        "grid_options": {"columns": columns, "rows": "auto"},
+    }
+    if entity:
+        card["entity"] = entity
+    if hide:
+        card["card_mod"] = {
+            "style": "{% if " + hide + " %}"
+            ":host { display: none !important; }{% endif %}"
+        }
+    card.update(extra)
+    return card
+
+
 # ---- Composants ----
 
-def _heading(th: dict, title: str, icon: str, **extra: Any) -> dict:
-    """Titre de section : petites capitales, icône d'accent."""
+def _heading(th: dict, title: str, **extra: Any) -> dict:
+    """Titre de section : petites capitales précédées d'un carré d'accent."""
     card = {
-        "type": "heading", "heading": title, "icon": icon,
+        "type": "heading", "heading": title,
         "card_mod": {"style": (
             "ha-card { background: none; border: none; box-shadow: none; } "
             ".title { font-family: " + th["font_label"] + "; "
             "text-transform: uppercase; letter-spacing: 1.6px; "
             "font-size: 11px !important; font-weight: 600; color: "
-            + th["muted"] + " !important; } ha-icon, ha-state-icon { color: "
-            + th["accent"] + " !important; --mdc-icon-size: 16px; }"
+            + th["muted"] + " !important; display: flex; align-items: center; "
+            "gap: 8px; } .title::before { content: ''; width: 6px; height: 6px; "
+            "border-radius: 2px; background: " + th["accent"] + "; flex: none; }"
         )},
     }
     card.update(extra)
     return card
 
 
-def _kpi(th: dict, entity: str, name: str, icon: str, tone: str,
-         columns: int, decimals: int, live: bool = False) -> dict:
-    """Tuile chiffre clé + sparkline (mini-graph-card).
-
-    `live` : grande tuile de la bande "Temps réel" (chiffre XL, courbe sur la
-    dernière heure, assez de points pour suivre un rafraîchissement de 2 s).
-    """
+def _kpi(th: dict, entity: str, name: str, tone: str, decimals: int) -> dict:
+    """Tuile chiffre clé + sparkline sur la dernière heure (mini-graph-card)."""
+    size = str(th["kpi_size"])
     style = _panel(th) + (
-        ".state__value { font-family: " + th["font_num"] + "; "
-        "font-weight: 700; letter-spacing: -0.5px; } .state__uom { "
-        "font-family: " + _SYS + "; opacity: 0.6; } .header .name { "
-        "font-family: " + th["font_label"] + "; text-transform: uppercase; "
-        "letter-spacing: 1.3px; font-size: 10.5px; color: " + th["muted"]
-        + "; } .header .icon { color: " + tone + "; } "
+        ".state__value { font-family: " + th["font_num"] + "; font-weight: 700; "
+        "letter-spacing: -0.5px; font-size: " + size + "px !important; } "
+        ".state__uom { font-family: " + _SYS + "; opacity: 0.6; } "
+        ".header .name { font-family: " + th["font_label"] + "; "
+        "text-transform: uppercase; letter-spacing: 1.3px; font-size: 11px; "
+        "font-weight: 600; color: " + th["muted"] + "; } "
     )
-    if live:
-        size = str(th["kpi_size"])
-        style += ".state__value { font-size: " + size + "px !important; } "
-        if th["kpi_bar"]:
-            style += "ha-card { box-shadow: inset 3px 0 0 " + tone + "; } "
+    if th["kpi_bar"]:
+        style += "ha-card { box-shadow: inset 3px 0 0 " + tone + "; } "
     return {
         "type": "custom:mini-graph-card",
         "entities": [{"entity": entity, "color": tone}],
-        "name": name, "icon": icon,
-        "hours_to_show": 1 if live else 6,
-        "points_per_hour": 120 if live else 12,
+        "name": name, "hours_to_show": 1, "points_per_hour": 120,
         "line_width": 2, "height": 56, "decimals": decimals, "animate": True,
-        "show": {"fill": "fade", "labels": False, "extrema": False,
-                 "legend": False, "points": False},
-        "grid_options": {"columns": columns},
+        "show": {"icon": False, "fill": "fade", "labels": False,
+                 "extrema": False, "legend": False, "points": False},
+        "grid_options": {"columns": 6},
         "card_mod": {"style": style},
     }
 
 
-def _tile(th: dict, primary: str, secondary: str, icon: str, tone: str,
-          style: str = "", **extra: Any) -> dict:
-    """Carte Mushroom au style du thème (icône teintée)."""
-    card = {
-        "type": "custom:mushroom-template-card",
-        "primary": primary, "secondary": secondary, "icon": icon,
-        "card_mod": {"style": _panel(th) + _icon(tone) + _nums(th) + style},
-    }
-    card.update(extra)
-    return card
+def _mini(th: dict, entity: str, label: str, value: str, tone: str | None = None,
+          pct: str | None = None, columns: int = 12) -> dict:
+    """Étiquette à gauche, valeur à droite, jauge arrondie en dessous.
+
+    `value` / `pct` sont des expressions JS (la variable `v` vaut N(entité)).
+    """
+    meter = ("${meter(" + pct + ", @TONE@)}") if pct else ""
+    js = _js(th, (
+        "const v=N(@E@);return `<div style=\"padding:14px 16px\"><div style=\""
+        "display:flex;justify-content:space-between;align-items:baseline;gap:10px\">"
+        "${lab(@L@)}<b style=\"font:700 18px ${T.fn};font-variant-numeric:"
+        "tabular-nums;white-space:nowrap\">${" + value + "}</b></div>" + meter
+        + "</div>`;"
+    ), E=entity, L=label, TONE=tone or th["accent"])
+    return _html(th, js, [entity], columns, entity)
 
 
-def _top_list(th: dict, entity: str, tone: str, icon: str, title: str) -> dict:
-    """Classement top destinations : une ligne par rang, barre au prorata."""
+def _temp(th: dict, entity: str, label: str, warn_at: int, bad_at: int,
+          sub: str) -> dict:
+    """Température : gros chiffre coloré selon le seuil, jauge, sous-ligne."""
+    js = _js(th, (
+        "const v=N(@E@);const c=v>=@BAD@?T.bad:(v>=@WARN@?T.warn:T.ok);"
+        "const sub=(()=>{" + sub + "})();"
+        "return `<div style=\"padding:14px 16px;display:flex;flex-direction:column;"
+        "gap:2px\">${lab(@L@)}<span style=\"font:700 24px ${T.fn};"
+        "font-variant-numeric:tabular-nums;color:${c}\">${fr(v,1)}<small style=\""
+        "font:500 12px ${T.sys};color:${T.muted};margin-left:3px\">°C</small></span>"
+        "${meter(v,c)}<span style=\"font:500 11px ${T.sys};color:${T.muted};"
+        "margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">"
+        "${esc(sub)||'&nbsp;'}</span></div>`;"
+    ), E=entity, L=label, WARN=warn_at, BAD=bad_at)
+    return _html(th, js, [entity], 6, entity,
+                 visibility=[{"condition": "state", "entity": entity,
+                              "state_not": ["unknown", "unavailable"]}])
+
+
+def _top_list(th: dict, entity: str, tone: str, title: str, arrow: str) -> dict:
+    """Classement : carré de rang teinté, nom + adresse, débit à droite,
+    barre de fond au prorata du premier."""
     rows: list[dict[str, Any]] = [{
         "type": "heading", "heading": title, "heading_style": "subtitle",
-        "icon": icon,
+        "icon": arrow,
         "card_mod": {"style": "ha-icon { color: " + tone + " !important; }"},
     }]
-    top = "(state_attr('" + entity + "','top_5') or [])"
     for i in range(TOP_ROWS):
-        pick = ("{% set l = " + top + " %}{% set d = l[" + str(i)
-                + "] if l | count > " + str(i) + " else none %}")
-        peak = ("{% set mx = (l | map(attribute='rate_bps') | max) "
-                "if l | count > 0 else 1 %}")
-        pct = "{{ ((d.rate_bps / mx * 100) if d and mx else 0) | round(1) }}%"
-        rows.append({
-            "type": "custom:mushroom-template-card",
-            "primary": pick + "{{ d.name if d else '-' }}",
-            "secondary": pick + (
-                "{% if d %}{% set r = d.rate_bps %}"
-                "{{ (r / 1000000) | round(1) ~ ' Mbit/s' if r >= 1000000 "
-                "else (r / 1000) | round(0) | int ~ ' kbit/s' }}"
-                "{% if d.name != d.address %}  ·  {{ d.address }}{% endif %}"
-                "{% endif %}"
-            ),
-            "icon": f"mdi:numeric-{i + 1}",
-            "card_mod": {"style": pick + peak + _panel(th) + _icon(tone) + (
-                "ha-card { background: linear-gradient(90deg, color-mix(in "
-                "srgb, " + tone + " 18%, transparent) " + pct + ", transparent "
-                + pct + "), " + th["card"] + "; } .primary { font-size: 12.5px "
-                "!important; white-space: nowrap; overflow: hidden; "
-                "text-overflow: ellipsis; } .secondary { font-family: "
-                + th["font_num"] + "; }"
-            )},
-        })
+        js = _js(th, (
+            "const l=A(@E@,'top_5')||[];const d=l[@I@];if(!d)return '';"
+            "const mx=Math.max(1,...l.map((x)=>x.rate_bps||0));const r=d.rate_bps||0;"
+            "const rate=r>=1e6?fr(r/1e6,1)+' Mbit/s':Math.round(r/1e3)+' kbit/s';"
+            "return `<span style=\"position:absolute;inset:0 auto 0 0;"
+            "width:${(r/mx*100).toFixed(1)}%;background:@TONE_RAW@;"
+            "opacity:${T.bar_o}\"></span>`+item(ico(@I@+1,@TONE@),d.name,"
+            "d.name!==d.address?d.address:'',rate);"
+        ).replace("@TONE_RAW@", tone), E=entity, I=i, TONE=tone)
+        rows.append(_html(
+            th, js, [entity], 12, entity,
+            hide="(state_attr('" + entity + "','top_5') or []) | count <= " + str(i),
+        ))
     return {"type": "vertical-stack", "cards": rows,
             "grid_options": {"columns": 12}}
 
@@ -291,23 +377,21 @@ def _tunnels(th: dict, entity: str) -> dict:
     """
     cards = []
     for i in range(TUNNEL_SLOTS):
-        pick = ("{% set t = state_attr('" + entity + "','tunnels') or [] %}"
-                "{% set x = t[" + str(i) + "] if t | count > " + str(i)
-                + " else none %}")
-        tone = "{{ '" + th["ok"] + "' if x and x.up else '" + th["bad"] + "' }}"
-        cards.append({
-            "type": "custom:mushroom-template-card",
-            "primary": pick + "{{ x.name | title if x else '' }}",
-            "secondary": pick + (
-                "{% if x %}{{ 'En ligne' if x.up else 'Coupé' }} · {{ x.kind }}"
-                " · {{ x.address or '-' }}"
-                "{% if x.remote %} → {{ x.remote }}{% endif %}{% endif %}"
-            ),
-            "icon": pick + "{{ 'mdi:lock' if x and x.up else 'mdi:lock-off' }}",
-            "card_mod": {"style": pick + _panel(th) + _icon(tone)
-                         + ".secondary { font-family: " + th["font_num"] + "; } "
-                         + "{% if not x %}:host { display: none; }{% endif %}"},
-        })
+        js = _js(th, (
+            "const t=(A(@E@,'tunnels')||[])[@I@];if(!t)return '';"
+            "const c=t.up?T.ok:T.bad;"
+            "const nm=String(t.name||t.device).toLowerCase()"
+            ".replace(/\\b\\w/g,(m)=>m.toUpperCase())"
+            ".replace(/Wireguard/g,'WireGuard').replace(/Openvpn/g,'OpenVPN')"
+            ".replace(/Ipsec/g,'IPsec').replace(/\\bVpn\\b/g,'VPN')"
+            ".replace(/\\bVti\\b/g,'VTI');"
+            "return item(ico('●',c),nm,`${t.kind} · ${t.address||'–'}"
+            "${t.remote?' → '+t.remote:''}`,t.up?'En ligne':'Coupé',c);"
+        ), E=entity, I=i)
+        cards.append(_html(
+            th, js, [entity], 12, entity,
+            hide="(state_attr('" + entity + "','tunnels') or []) | count <= " + str(i),
+        ))
     return {"type": "vertical-stack", "cards": cards,
             "grid_options": {"columns": 12}}
 
@@ -321,46 +405,38 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         return e.get(key, f"sensor.unknown_{key}")
 
     wan = s("wan_connected")
-    upd = s("update_available")
-
-    def wan_on(on: str, off: str) -> str:
-        return "{{ '" + on + "' if is_state('" + wan + "','on') else '" + off + "' }}"
-
-    # Uptime OPNsense : "2 days, 02:41:10" / "1 day, 03:00:00" / "02:41:10".
-    uptime = (
-        "{% set p = states('" + s("uptime") + "').split(', ') %}"
-        "{% set hms = p[-1].split(':') %}{% if hms | count == 3 %}"
-        "{{ (p[0].split(' ')[0] ~ ' j ') if p | count > 1 else '' }}"
-        "{{ hms[0] | int }} h {{ hms[1] }}{% else %}-{% endif %}"
-    )
 
     # ---- Bandeau d'état ----
-    state_tone = wan_on(th["ok"], th["bad"])
-    hero = {
-        "type": "custom:mushroom-template-card",
-        "primary": "{{ states('" + s("hostname") + "').split('.')[0] | upper }}",
-        "secondary": (
-            wan_on("● En ligne", "● WAN coupé")
-            + "{{ '   ◉ Temps réel' if is_number(states('" + s("cpu_usage")
-            + "')) else '' }}   ·   OPNsense {{ states('" + s("opnsense_version")
-            + "').split('-')[0] }}   ·   {{ states('" + s("public_ipv4")
-            + "') }}   ·   up " + uptime
-        ),
-        "icon": "mdi:shield-lock",
-        "tap_action": {"action": "more-info", "entity": wan},
-        "grid_options": {"columns": "full"},
-        "card_mod": {"style": (
-            _panel(th) + _icon(state_tone)
-            + "ha-card { background: " + th["hero_bg"] + "; border-color: "
-            + th["hero_line"] + "; --card-primary-font-size: 21px; "
-            "--card-primary-line-height: 28px; --card-primary-font-weight: 700; "
-            "--card-primary-letter-spacing: " + th["name_track"] + "; "
-            "--card-secondary-font-size: 12.5px; "
-            "--card-secondary-line-height: 18px; --icon-size: 46px; "
-            "padding: 6px 4px; } .primary { font-family: " + th["font_display"]
-            + "; } .secondary { font-family: " + _MONO + "; }"
-        )},
-    }
+    hero_js = _js(th, (
+        "const up=S(@WAN@)==='on';const live=!isNaN(N(@CPU@));"
+        "const c=up?T.ok:T.bad;"
+        "const host=S(@HOST@).split('.')[0].toUpperCase();"
+        "const ver=S(@VER@).split('-')[0];"
+        # Uptime OPNsense : "2 days, 02:41:10" / "1 day, 03:00:00" / "02:41:10".
+        "const p=S(@UPT@).split(', ');const h=p[p.length-1].split(':');"
+        "const upt=h.length===3?(p.length>1?p[0].split(' ')[0]+' j ':'')"
+        "+parseInt(h[0],10)+' h '+h[1]:'–';"
+        "return `<style>@keyframes opnp{50%{opacity:.25}}"
+        ".lv{animation:opnp 1.6s ease-in-out infinite}"
+        "@media (prefers-reduced-motion:reduce){.lv{animation:none}}</style>"
+        "<div style=\"display:flex;align-items:center;gap:16px;padding:18px 20px\">"
+        "<div style=\"width:46px;height:46px;border-radius:12px;display:grid;"
+        "place-items:center;flex:none;background:${soft(c)};color:${c}\">"
+        "<ha-icon icon=\"${up?'mdi:shield-check':'mdi:shield-alert'}\" "
+        "style=\"--mdc-icon-size:24px\"></ha-icon></div><div style=\"min-width:0\">"
+        "<div style=\"font:700 21px ${T.fd};letter-spacing:${T.name_track};"
+        "line-height:1.25\">${esc(host)}</div><div style=\"display:flex;"
+        "flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:4px;"
+        "font:500 12.5px ${T.mono};color:${T.muted}\">"
+        "${pill(up?'En ligne':'WAN coupé',c)}"
+        "${live?pill('Temps réel',T.accent,true):''}"
+        "<span>OPNsense ${esc(ver)}</span><span>${esc(S(@IP@))}</span>"
+        "<span>up ${upt}</span></div></div></div>`;"
+    ), WAN=wan, CPU=s("cpu_usage"), HOST=s("hostname"),
+        VER=s("opnsense_version"), UPT=s("uptime"), IP=s("public_ipv4"))
+    hero = _html(th, hero_js, [wan, s("cpu_usage"), s("hostname"),
+                               s("opnsense_version"), s("uptime"), s("public_ipv4")],
+                 "full", wan, hero=True)
 
     # ---- Temps réel ----
     def serie(entity: str, name: str, color: str) -> dict:
@@ -388,130 +464,81 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "grid_options": {"columns": "full"},
         "card_mod": {"style": _panel(th) + (
             ".header #header__title { font-family: " + th["font_label"] + "; "
-            "letter-spacing: 1.4px; font-size: 11px; color: " + th["muted"] + "; }"
+            "letter-spacing: 1.4px; font-size: 11px; font-weight: 600; color: "
+            + th["muted"] + "; }"
         )},
     }
     live = {"type": "grid", "column_span": 2, "cards": [
-        _heading(th, "Temps réel", "mdi:lightning-bolt"),
-        _kpi(th, s("wan_throughput_in"), "↓ Entrant", "mdi:arrow-down",
-             th["in"], 6, 1, live=True),
-        _kpi(th, s("wan_throughput_out"), "↑ Sortant", "mdi:arrow-up",
-             th["out"], 6, 1, live=True),
-        _kpi(th, s("wan_latency"), "Latence", "mdi:timer-outline", th["ok"],
-             6, 1, live=True),
-        _kpi(th, s("cpu_usage"), "CPU", "mdi:cpu-64-bit", th["warn"], 6, 0,
-             live=True),
+        _heading(th, "Temps réel"),
+        _kpi(th, s("wan_throughput_in"), "↓ Entrant", th["in"], 1),
+        _kpi(th, s("wan_throughput_out"), "↑ Sortant", th["out"], 1),
+        _kpi(th, s("wan_latency"), "Latence", th["ok"], 1),
+        _kpi(th, s("cpu_usage"), "CPU", th["warn"], 0),
         chart,
     ]}
 
     # ---- Colonne de droite : connexion, températures, système ----
-    loss = "states('" + s("wan_packet_loss") + "')"
     services = s("services_stopped")
-    n = "{% set n = states('" + services + "') %}"
-    svc_tone = (n + "{{ '" + th["muted"] + "' if not is_number(n) else ('"
-                + th["ok"] + "' if n | int == 0 else '" + th["bad"] + "') }}")
-    upd_on = "is_state('" + upd + "','on')"
-
-    def temp_tile(key: str, label: str, warn_at: int, bad_at: int) -> dict:
-        ent = s(key)
-        val = "states('" + ent + "') | float(0)"
-        tone = ("{{ '" + th["bad"] + "' if " + val + " >= " + str(bad_at)
-                + " else ('" + th["warn"] + "' if " + val + " >= " + str(warn_at)
-                + " else '" + th["ok"] + "') }}")
-        return _tile(
-            th,
-            "{{ " + val + " | round(1) }} °C", label, "mdi:thermometer", tone,
-            style=_meter(th, tone, val) + ".primary { color: " + tone
-            + " !important; font-weight: 700 !important; }",
-            tap_action={"action": "more-info", "entity": ent},
-            grid_options={"columns": 6},
-            visibility=[{"condition": "state", "entity": ent,
-                         "state_not": ["unknown", "unavailable"]}],
-        )
+    services_js = _js(th, (
+        "const n=N(@E@);const run=A(@E@,'running'),tot=A(@E@,'total');"
+        "const stop=A(@E@,'stopped')||[];"
+        "if(isNaN(n))return row2('Services',pill('Droits API',T.warn),"
+        "'Privilège Status: Services requis','');"
+        "if(n===0)return row2('Services',pill('Tout tourne',T.ok),"
+        "`${run} / ${tot} actifs`,'');"
+        "return row2('Services',pill(n+(n>1?' arrêtés':' arrêté'),T.bad),"
+        "`${run} / ${tot} actifs`,stop.join(', '));"
+    ), E=services)
+    firmware_js = _js(th, (
+        "const up=S(@UPD@)==='on';"
+        "return row2('Firmware',up?pill('Mise à jour',T.warn):pill('À jour',T.ok),"
+        "esc(S(@INST@)),up?S(@LAST@)+' disponible':'appui long : vérifier');"
+    ), UPD=s("update_available"), INST=s("firmware_installed"),
+        LAST=s("firmware_latest"))
 
     side = {"type": "grid", "cards": [
-        _heading(th, "Connexion", "mdi:pulse"),
-        _tile(
-            th, "{{ " + loss + " | float(0) | round(1) }} %", "Pertes de paquets",
-            "mdi:chart-bell-curve", th["ok"],
-            style=_meter(th, th["ok"], loss + " | float(0) * 10"),
-            tap_action={"action": "more-info", "entity": s("wan_packet_loss")},
-            grid_options={"columns": 12},
-        ),
-        _tile(
-            th, "Services",
-            n + "{% if not is_number(n) %}Droits API manquants (Status: Services)"
-            "{% elif n | int == 0 %}{{ state_attr('" + services + "','running') }}"
-            " / {{ state_attr('" + services + "','total') }} actifs"
-            "{% else %}{{ n }} arrêté(s) : {{ (state_attr('" + services
-            + "','stopped') or []) | join(', ') }}{% endif %}",
-            n + "{{ 'mdi:cog-outline' if is_number(n) and n | int == 0 "
-            "else 'mdi:cog-off-outline' }}",
-            svc_tone, multiline_secondary=True,
-            tap_action={"action": "more-info", "entity": services},
-            grid_options={"columns": 12},
-        ),
-        _tile(
-            th, "Firmware",
-            "{{ 'Mise à jour ' ~ states('" + s("firmware_latest") + "') ~ "
-            "' disponible' if " + upd_on + " else 'À jour · ' ~ states('"
-            + s("firmware_installed") + "') }}",
-            "{{ 'mdi:package-up' if " + upd_on + " else "
-            "'mdi:package-variant-closed-check' }}",
-            "{{ '" + th["warn"] + "' if " + upd_on + " else '" + th["ok"] + "' }}",
-            tap_action={"action": "more-info", "entity": s("firmware_update")},
-            hold_action={"action": "perform-action",
-                         "perform_action": "button.press",
-                         "target": {"entity_id": s("check_updates")}},
-            grid_options={"columns": 12},
-        ),
-        _heading(th, "Températures", "mdi:thermometer"),
-        temp_tile("temp_cpu", "CPU", 60, 75),
-        temp_tile("temp_sfp", "SFP", 50, 65),
-        _heading(th, "Système", "mdi:chip"),
-        _tile(
-            th, "{{ states('" + s("ram_used_percent") + "') | float(0) | round(1) }} %",
-            "RAM", "mdi:memory", th["out"],
-            style=_meter(th, th["out"], "states('" + s("ram_used_percent") + "')"),
-            tap_action={"action": "more-info", "entity": s("ram_used_percent")},
-            grid_options={"columns": 6},
-        ),
-        _tile(
-            th, "{{ states('" + s("disk_root_percent")
-            + "') | float(0) | round(0) | int }} %",
-            "Disque /", "mdi:harddisk", th["in"],
-            style=_meter(th, th["in"], "states('" + s("disk_root_percent") + "')"),
-            tap_action={"action": "more-info", "entity": s("disk_root_percent")},
-            grid_options={"columns": 6},
-        ),
+        _heading(th, "Connexion"),
+        _mini(th, s("wan_packet_loss"), "Pertes de paquets", "fr(v,1)+' %'",
+              th["ok"], "v*10"),
+        _html(th, services_js, [services], 12, services),
+        _html(th, firmware_js,
+              [s("update_available"), s("firmware_installed"), s("firmware_latest")],
+              12, s("firmware_update"),
+              hold_action={"action": "perform-action",
+                           "perform_action": "button.press",
+                           "target": {"entity_id": s("check_updates")}}),
+        _heading(th, "Températures"),
+        _temp(th, s("temp_cpu"), "CPU", 60, 75, (
+            "const n=(A(@E@,'sensors')||[]).filter((x)=>x.type==='cpu').length;"
+            "return n>1?`max des ${n} cœurs`:'sonde processeur';"
+        ).replace("@E@", json.dumps(s("temp_cpu")))),
+        _temp(th, s("temp_sfp"), "SFP", 50, 65, (
+            "const m=(A(@E@,'modules')||[])[0];"
+            "return m?`module ${m.device}${m.interface?' · '+m.interface:''}`:'';"
+        ).replace("@E@", json.dumps(s("temp_sfp")))),
+        _heading(th, "Système"),
+        _mini(th, s("ram_used_percent"), "RAM", "fr(v,1)+' %'", th["out"], "v"),
+        _mini(th, s("disk_root_percent"), "Disque /", "fr(v,0)+' %'", th["in"], "v"),
     ]}
 
     # ---- Top destinations ----
     top = {"type": "grid", "column_span": 2, "cards": [
-        _heading(th, "Top destinations", "mdi:podium"),
-        _top_list(th, s("wan_top_dest_in"), th["in"], "mdi:arrow-down", "Entrant"),
-        _top_list(th, s("wan_top_dest_out"), th["out"], "mdi:arrow-up", "Sortant"),
+        _heading(th, "Top destinations"),
+        _top_list(th, s("wan_top_dest_in"), th["in"], "Entrant", "mdi:arrow-down"),
+        _top_list(th, s("wan_top_dest_out"), th["out"], "Sortant", "mdi:arrow-up"),
     ]}
 
     # ---- Tunnels VPN + volumes WAN ----
     tunnels = s("vpn_tunnels_up")
-
-    def total(entity: str, name: str, icon: str, tone: str) -> dict:
-        return _tile(
-            th, "{{ states('" + entity + "') | float(0) | round(1) }} Go",
-            name, icon, tone,
-            tap_action={"action": "more-info", "entity": entity},
-            grid_options={"columns": 6},
-        )
-
     vpn = {"type": "grid", "cards": [
-        _heading(th, "Tunnels VPN", "mdi:vpn",
+        _heading(th, "Tunnels VPN",
                  badges=[{"type": "entity", "entity": tunnels,
                           "show_state": True, "show_icon": False}]),
         _tunnels(th, tunnels),
-        _heading(th, "Volumes WAN", "mdi:swap-vertical"),
-        total(s("wan_total_received"), "Reçu", "mdi:arrow-down", th["in"]),
-        total(s("wan_total_transmitted"), "Transmis", "mdi:arrow-up", th["out"]),
+        _heading(th, "Volumes WAN"),
+        _mini(th, s("wan_total_received"), "↓ Reçu", "fr(v,1)+' Go'", columns=6),
+        _mini(th, s("wan_total_transmitted"), "↑ Transmis", "fr(v,1)+' Go'",
+              columns=6),
     ]}
 
     return {
