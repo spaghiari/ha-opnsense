@@ -17,6 +17,7 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfDataRate,
     UnitOfInformation,
+    UnitOfTemperature,
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
@@ -642,6 +643,68 @@ def _tunnels(data: dict) -> list[dict] | None:
     return tunnels
 
 
+# ----- Températures -----
+#
+# /api/diagnostics/system/system_temperature renvoie une liste de sondes
+# {device, device_seq, temperature: "47.0", type: cpu|amd|zone|platform|other}.
+# Les modules SFP rapportent leur propre température dans interfacesInfo
+# (row["sfp"]["temperature"] = "34.39 C").
+
+_CPU_SENSOR_TYPES = ("cpu", "amd", "intel")
+
+
+def _temperatures(data: dict) -> list[dict] | None:
+    """Sondes de température normalisées (valeur en °C)."""
+    raw = data.get("system_temperature")
+    if not isinstance(raw, list):
+        return None
+    sensors = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        value = _leading_float(item.get("temperature"))
+        if value is None:
+            continue
+        sensors.append({
+            "device": item.get("device"),
+            "type": item.get("type") or "other",
+            "label": item.get("type_translated") or item.get("type"),
+            "celsius": value,
+        })
+    return sensors
+
+
+def _temp_cpu(data: dict) -> float | None:
+    """Température CPU : la plus chaude des sondes processeur (repli : toutes)."""
+    sensors = _temperatures(data) or []
+    cpu = [s["celsius"] for s in sensors if s["type"] in _CPU_SENSOR_TYPES]
+    values = cpu or [s["celsius"] for s in sensors]
+    return round(max(values), 1) if values else None
+
+
+def _sfp_modules(data: dict) -> list[dict]:
+    """Modules SFP qui rapportent une température (interfacesInfo)."""
+    rows = _get(data, "interfaces", "rows")
+    modules = []
+    for row in rows if isinstance(rows, list) else []:
+        sfp = row.get("sfp") if isinstance(row, dict) else None
+        if isinstance(sfp, dict):
+            value = _leading_float(sfp.get("temperature"))
+            if value is not None:
+                modules.append({
+                    "device": row.get("device"),
+                    "interface": (row.get("description") or "").removeprefix("IFACE_"),
+                    "module": (sfp.get("plugged") or "").strip(),
+                    "celsius": value,
+                })
+    return modules
+
+
+def _temp_sfp(data: dict) -> float | None:
+    modules = _sfp_modules(data)
+    return round(max(m["celsius"] for m in modules), 1) if modules else None
+
+
 def _vpn_tunnels_up(data: dict) -> int | None:
     tunnels = _tunnels(data)
     if tunnels is None:
@@ -980,6 +1043,31 @@ SENSOR_DESCRIPTIONS: tuple[tuple[SensorEntityDescription, Callable], ...] = (
         ),
         _services_stopped,
     ),
+    # ----- Températures (même contrôleur que system_information) -----
+    (
+        SensorEntityDescription(
+            key="temp_cpu",
+            translation_key="temp_cpu",
+            icon="mdi:thermometer",
+            device_class=SensorDeviceClass.TEMPERATURE,
+            native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+            suggested_display_precision=1,
+            state_class=SensorStateClass.MEASUREMENT,
+        ),
+        _temp_cpu,
+    ),
+    (
+        SensorEntityDescription(
+            key="temp_sfp",
+            translation_key="temp_sfp",
+            icon="mdi:expansion-card-variant",
+            device_class=SensorDeviceClass.TEMPERATURE,
+            native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+            suggested_display_precision=1,
+            state_class=SensorStateClass.MEASUREMENT,
+        ),
+        _temp_sfp,
+    ),
     # ----- Tunnels VPN (déduits des interfaces) -----
     (
         SensorEntityDescription(
@@ -1003,6 +1091,8 @@ ATTRIBUTE_EXTRACTORS = {
         "gateways": _gateways(data) or [],
     },
     "services_stopped": _services_attributes,
+    "temp_cpu": lambda data: {"sensors": _temperatures(data) or []},
+    "temp_sfp": lambda data: {"modules": _sfp_modules(data)},
     "vpn_tunnels_up": lambda data: {
         "total": len(_tunnels(data) or []),
         "tunnels": _tunnels(data) or [],
@@ -1029,6 +1119,7 @@ async def async_setup_entry(
 FAST_SENSORS = {
     "public_ipv4", "public_ipv6", "wan_status", "wan_total_received",
     "wan_total_transmitted", "wan_latency", "wan_packet_loss", "vpn_tunnels_up",
+    "temp_cpu", "temp_sfp",
 }
 # Temps réel : flux OPNsense, avec repli sur le polling rapide puis lent.
 LIVE_SENSORS = {"wan_throughput_in", "wan_throughput_out", "cpu_usage"}

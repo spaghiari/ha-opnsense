@@ -30,6 +30,7 @@ from .const import (
     ALERT_FIRMWARE,
     ALERT_LATENCY,
     ALERT_SERVICES,
+    ALERT_TEMPERATURE,
     ALERT_VPN,
     ALERT_WAN,
     CONF_ALERTS,
@@ -37,13 +38,16 @@ from .const import (
     CONF_LATENCY_THRESHOLD,
     CONF_NOTIFY_PERSISTENT,
     CONF_NOTIFY_TARGETS,
+    CONF_TEMP_THRESHOLD,
     CONF_WAN_DOWN_DELAY,
     DEFAULT_LATENCY_DURATION,
     DEFAULT_LATENCY_THRESHOLD,
     DEFAULT_NOTIFY_PERSISTENT,
+    DEFAULT_TEMP_THRESHOLD,
     DEFAULT_WAN_DOWN_DELAY,
     DISK_ALERT_PCT,
     DISK_REARM_PCT,
+    TEMP_REARM_DELTA,
 )
 from .coordinator import OPNsenseDataCoordinator
 from .sensor import (
@@ -51,6 +55,7 @@ from .sensor import (
     _get,
     _root_disk_used_percent,
     _services_attributes,
+    _temp_cpu,
     _tunnels,
     _wan_latency,
 )
@@ -101,6 +106,9 @@ class OPNsenseAlerts:
         self.latency_duration = 60 * options.get(
             CONF_LATENCY_DURATION, DEFAULT_LATENCY_DURATION
         )
+        self.temp_threshold = options.get(
+            CONF_TEMP_THRESHOLD, DEFAULT_TEMP_THRESHOLD
+        )
         # État interne
         self._baseline_done = False
         self._wan_down_since: datetime | None = None
@@ -111,6 +119,7 @@ class OPNsenseAlerts:
         self._stopped_services: set[str] = set()
         self._tunnels_up: dict[str, bool] = {}
         self._disk_alerted = False
+        self._temp_alerted = False
 
     @property
     def active(self) -> bool:
@@ -146,6 +155,8 @@ class OPNsenseAlerts:
         }
         disk = _root_disk_used_percent(data)
         self._disk_alerted = disk is not None and disk >= DISK_ALERT_PCT
+        temp = _temp_cpu(data)
+        self._temp_alerted = temp is not None and temp >= self.temp_threshold
 
     def _evaluate(self, data: dict, now: datetime) -> list[tuple[str, str, str]]:
         """Renvoie les notifications à envoyer pour ce cycle."""
@@ -267,6 +278,25 @@ class OPNsenseAlerts:
                 self._disk_alerted = True
             elif disk < DISK_REARM_PCT:
                 self._disk_alerted = False
+
+        # ---- Température CPU (hystérésis de TEMP_REARM_DELTA °C) ----
+        temp = _temp_cpu(data)
+        if temp is not None and ALERT_TEMPERATURE in self.enabled:
+            if not self._temp_alerted and temp >= self.temp_threshold:
+                self._temp_alerted = True
+                out.append((
+                    f"🌡️ {name} : température élevée",
+                    f"CPU à {temp:.0f} °C (seuil {self.temp_threshold} °C).",
+                    "temperature",
+                ))
+            elif (self._temp_alerted
+                    and temp < self.temp_threshold - TEMP_REARM_DELTA):
+                self._temp_alerted = False
+                out.append((
+                    f"🟢 {name} : température normale",
+                    f"CPU redescendu à {temp:.0f} °C.",
+                    "temperature",
+                ))
 
         return out
 

@@ -16,6 +16,13 @@ CONF_WAN_INTERFACE = "wan_interface"
 # Crée automatiquement un dashboard "OPNsense" dans la barre latérale.
 CONF_CREATE_DASHBOARD = "create_dashboard"
 DEFAULT_CREATE_DASHBOARD = True
+# Thème du dashboard auto (cf. dashboard.THEMES).
+CONF_DASHBOARD_THEME = "dashboard_theme"
+THEME_GRAPHITE = "graphite"
+THEME_AURORE = "aurore"
+THEME_COCKPIT = "cockpit"
+DASHBOARD_THEMES = (THEME_GRAPHITE, THEME_AURORE, THEME_COCKPIT)
+DEFAULT_DASHBOARD_THEME = THEME_GRAPHITE
 
 # ---- Alertes intégrées (étape "Notifications" des options) ----
 CONF_ALERTS = "alerts"
@@ -30,9 +37,10 @@ ALERT_FIRMWARE = "firmware"
 ALERT_SERVICES = "services"
 ALERT_VPN = "vpn"
 ALERT_DISK = "disk"
+ALERT_TEMPERATURE = "temperature"
 ALERT_TYPES = (
     ALERT_WAN, ALERT_LATENCY, ALERT_FIRMWARE, ALERT_SERVICES, ALERT_VPN,
-    ALERT_DISK,
+    ALERT_DISK, ALERT_TEMPERATURE,
 )
 # Pré-cochées dans le formulaire ; rien n'est envoyé tant que l'utilisateur
 # n'a pas validé l'étape (options absentes = aucune alerte).
@@ -42,6 +50,10 @@ DEFAULT_NOTIFY_PERSISTENT = True
 DEFAULT_WAN_DOWN_DELAY = 1        # minutes
 DEFAULT_LATENCY_THRESHOLD = 100   # ms
 DEFAULT_LATENCY_DURATION = 5      # minutes
+# Température CPU : alerte au-dessus du seuil, ré-armée 5 °C en dessous.
+CONF_TEMP_THRESHOLD = "temp_threshold"
+DEFAULT_TEMP_THRESHOLD = 80       # °C
+TEMP_REARM_DELTA = 5
 # Disque : alerte au-dessus de DISK_ALERT_PCT, ré-armée sous DISK_REARM_PCT.
 DISK_ALERT_PCT = 90
 DISK_REARM_PCT = 85
@@ -51,7 +63,7 @@ DASHBOARD_URL_PATH = "opnsense"
 # Version du gabarit de dashboard. Incrémenter pour re-semer le design
 # par défaut au prochain chargement (les éditions manuelles seront alors
 # remplacées - le dashboard auto est "géré" par l'intégration).
-DASHBOARD_TEMPLATE_VERSION = 6
+DASHBOARD_TEMPLATE_VERSION = 7
 
 # Valeurs par défaut
 DEFAULT_PORT = 443
@@ -99,6 +111,8 @@ API_ENDPOINTS = {
     # sans eux, seuls les capteurs latence/pertes/services restent vides.
     "gateway_status": "/api/routes/gateway/status",
     "services": "/api/core/service/search",
+    # Sondes de température (même contrôleur que system_information).
+    "system_temperature": "/api/diagnostics/system/system_temperature",
     # Flux continus (Server-Sent Events) utilisés par le dashboard OPNsense :
     # octets par interface depuis l'événement précédent / CPU en %.
     "traffic_stream": "/api/diagnostics/traffic/stream/{interval}",
@@ -106,7 +120,9 @@ API_ENDPOINTS = {
 }
 
 # Répartition des endpoints entre les deux coordinators de polling.
-FAST_ENDPOINTS = ("interfaces", "gateway_status", "traffic_totals")
+FAST_ENDPOINTS = (
+    "interfaces", "gateway_status", "traffic_totals", "system_temperature",
+)
 SLOW_ENDPOINTS = (
     "firmware_status", "system_information", "system_resources",
     "system_disk", "system_time", "cpu_type", "traffic_wan", "services",
