@@ -345,9 +345,14 @@ def _temp(th: dict, entity: str, label: str, warn_at: int, bad_at: int,
                               "state_not": ["unknown", "unavailable"]}])
 
 
-def _top_list(th: dict, entity: str, tone: str, title: str, arrow: str) -> dict:
+def _top_list(th: dict, entity: str, wan: str, tone: str, title: str,
+              arrow: str) -> dict:
     """Classement : carré de rang teinté, nom + adresse, débit à droite,
-    barre de fond au prorata du premier."""
+    barre de fond au prorata du débit WAN total (`wan`, en Mbit/s), puis une
+    ligne qui dit quelle part du trafic WAN les 5 premiers représentent.
+
+    Le top vient d'une capture iftop de 2 s faite toutes les ~10 s : il ne
+    retombe jamais pile sur le débit WAN, d'où la ligne de couverture."""
     rows: list[dict[str, Any]] = [{
         "type": "heading", "heading": title, "heading_style": "subtitle",
         "icon": arrow,
@@ -356,17 +361,30 @@ def _top_list(th: dict, entity: str, tone: str, title: str, arrow: str) -> dict:
     for i in range(TOP_ROWS):
         js = _js(th, (
             "const l=A(@E@,'top_5')||[];const d=l[@I@];if(!d)return '';"
-            "const mx=Math.max(1,...l.map((x)=>x.rate_bps||0));const r=d.rate_bps||0;"
+            "const mx=Math.max(1,N(@W@)*1e6||0,...l.map((x)=>x.rate_bps||0));"
+            "const r=d.rate_bps||0;"
             "const rate=r>=1e6?fr(r/1e6,1)+' Mbit/s':Math.round(r/1e3)+' kbit/s';"
             "return `<span style=\"position:absolute;inset:0 auto 0 0;"
             "width:${(r/mx*100).toFixed(1)}%;background:@TONE_RAW@;"
             "opacity:${T.bar_o}\"></span>`+item(ico(@I@+1,@TONE@),d.name,"
             "d.name!==d.address?d.address:'',rate);"
-        ).replace("@TONE_RAW@", tone), E=entity, I=i, TONE=tone)
+        ).replace("@TONE_RAW@", tone), E=entity, I=i, TONE=tone, W=wan)
         rows.append(_html(
-            th, js, [entity], 12, entity,
+            th, js, [entity, wan], 12, entity,
             hide="(state_attr('" + entity + "','top_5') or []) | count <= " + str(i),
         ))
+    cover = _js(th, (
+        "const l=A(@E@,'top_5')||[];const w=N(@W@);"
+        "const t=l.reduce((a,x)=>a+(x.rate_bps||0),0)/1e6;"
+        "if(!l.length||isNaN(w)||w<=0)return '';"
+        "const p=Math.min(100,Math.round(t/w*100));"
+        "return `<div style=\"padding:10px 14px;font:500 12px ${T.sys};"
+        "color:${T.muted};display:flex;justify-content:space-between;gap:10px;"
+        "flex-wrap:wrap\"><span>Top ${l.length} : <b style=\"font:600 12px "
+        "${T.fn};color:${T.text}\">${fr(t,1)} Mbit/s</b> sur ${fr(w,1)} Mbit/s"
+        " du WAN (${p} %)</span><span>relevé de 2 s toutes les ~10 s</span></div>`;"
+    ), E=entity, W=wan)
+    rows.append(_html(th, cover, [entity, wan], 12, wan))
     return {"type": "vertical-stack", "cards": rows,
             "grid_options": {"columns": 12}}
 
@@ -579,11 +597,14 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
                 "color": color, "stroke_width": 2, "opacity": 0.16,
                 # Pic par tranche de 5 min : une moyenne écraserait un burst
                 # de quelques secondes (speedtest, téléchargement).
-                "group_by": {"func": "max", "duration": "5min"}}
+                "group_by": {"func": "max", "duration": "5min"},
+                # La légende donnerait le pic des 5 dernières minutes, pris
+                # pour le débit actuel : le chiffre courant est dans les tuiles.
+                "show": {"legend_value": False}}
 
     chart = {
         "type": "custom:apexcharts-card", "graph_span": "24h",
-        "header": {"show": True, "title": "TRAFIC WAN · 24 H"},
+        "header": {"show": True, "title": "TRAFIC WAN · 24 H · PICS PAR 5 MIN"},
         "series": [serie(s("wan_throughput_in"), "Entrant", th["in"]),
                    serie(s("wan_throughput_out"), "Sortant", th["out"])],
         "apex_config": {
@@ -660,8 +681,10 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
     # ---- Top destinations ----
     top = {"type": "grid", "column_span": 2, "cards": [
         _heading(th, "Top destinations"),
-        _top_list(th, s("wan_top_dest_in"), th["in"], "Entrant", "mdi:arrow-down"),
-        _top_list(th, s("wan_top_dest_out"), th["out"], "Sortant", "mdi:arrow-up"),
+        _top_list(th, s("wan_top_dest_in"), s("wan_throughput_in"), th["in"],
+                  "Entrant", "mdi:arrow-down"),
+        _top_list(th, s("wan_top_dest_out"), s("wan_throughput_out"), th["out"],
+                  "Sortant", "mdi:arrow-up"),
     ]}
 
     # ---- Tunnels VPN + volumes WAN ----
