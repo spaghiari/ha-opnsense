@@ -63,7 +63,7 @@ DASHBOARD_URL_PATH = "opnsense"
 # Version du gabarit de dashboard. Incrémenter pour re-semer le design
 # par défaut au prochain chargement (les éditions manuelles seront alors
 # remplacées - le dashboard auto est "géré" par l'intégration).
-DASHBOARD_TEMPLATE_VERSION = 7
+DASHBOARD_TEMPLATE_VERSION = 8
 
 # Valeurs par défaut
 DEFAULT_PORT = 443

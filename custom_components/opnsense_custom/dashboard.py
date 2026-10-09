@@ -155,12 +155,15 @@ def _nums(th: dict) -> str:
 
 
 def _meter(th: dict, tone: str, pct: str) -> str:
-    """Jauge fine sous la carte ; `pct` est une expression Jinja (0-100)."""
+    """Jauge en liseré au ras du bord bas ; `pct` est une expression Jinja.
+
+    Hors du flux : elle ne chevauche pas le texte et ne décale pas le contenu.
+    """
     return (
         "{% set p = [[(" + pct + ") | float(0), 0] | max, 100] | min %}"
-        "ha-card { position: relative; padding-bottom: 6px; } "
-        "ha-card::after { content: ''; position: absolute; left: 16px; "
-        "right: 16px; bottom: 9px; height: 5px; border-radius: 99px; "
+        "ha-card { position: relative; overflow: hidden; } "
+        "ha-card::after { content: ''; position: absolute; left: 0; "
+        "right: 0; bottom: 0; height: 4px; pointer-events: none; "
         "background: linear-gradient(90deg, " + tone + " {{ p }}%, "
         + th["track"] + " {{ p }}%); } "
     )
@@ -280,8 +283,12 @@ def _top_list(th: dict, entity: str, tone: str, icon: str, title: str) -> dict:
             "grid_options": {"columns": 12}}
 
 
-def _tunnels(th: dict, entity: str) -> list[dict]:
-    """Une ligne par tunnel VPN (emplacements vides masqués)."""
+def _tunnels(th: dict, entity: str) -> dict:
+    """Une ligne par tunnel VPN, dans une pile verticale.
+
+    La pile est indispensable : dans une section, une carte masquée garde sa
+    cellule de grille (trou visible), alors qu'une pile la retire vraiment.
+    """
     cards = []
     for i in range(TUNNEL_SLOTS):
         pick = ("{% set t = state_attr('" + entity + "','tunnels') or [] %}"
@@ -297,12 +304,12 @@ def _tunnels(th: dict, entity: str) -> list[dict]:
                 "{% if x.remote %} → {{ x.remote }}{% endif %}{% endif %}"
             ),
             "icon": pick + "{{ 'mdi:lock' if x and x.up else 'mdi:lock-off' }}",
-            "grid_options": {"columns": 12},
             "card_mod": {"style": pick + _panel(th) + _icon(tone)
                          + ".secondary { font-family: " + th["font_num"] + "; } "
                          + "{% if not x %}:host { display: none; }{% endif %}"},
         })
-    return cards
+    return {"type": "vertical-stack", "cards": cards,
+            "grid_options": {"columns": 12}}
 
 
 def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
@@ -499,7 +506,7 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         _heading(th, "Tunnels VPN", "mdi:vpn",
                  badges=[{"type": "entity", "entity": tunnels,
                           "show_state": True, "show_icon": False}]),
-        *_tunnels(th, tunnels),
+        _tunnels(th, tunnels),
         _heading(th, "Volumes WAN", "mdi:swap-vertical"),
         total(s("wan_total_received"), "Reçu", "mdi:arrow-down", th["in"]),
         total(s("wan_total_transmitted"), "Transmis", "mdi:arrow-up", th["out"]),
