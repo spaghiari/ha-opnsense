@@ -22,6 +22,7 @@ A custom Home Assistant integration that exposes your **OPNsense firewall** as a
 - **Uptime + last boot timestamp**
 - **Hostname** + **CPU model**
 - **OPNsense / FreeBSD / OpenSSL versions**
+- **Temperatures** *(v2.1)* - CPU (hottest probe) and SFP modules, every probe detailed in attributes
 
 ### WAN monitoring
 - **Public IPv4 and IPv6** addresses
@@ -43,7 +44,7 @@ A custom Home Assistant integration that exposes your **OPNsense firewall** as a
 
 ### Configuration
 - **Setup via UI** - no YAML editing
-- **Polling interval configurable** at runtime (30-600 seconds)
+- **Configuration menu** with three screens *(v2.1)*: refresh, dashboard and theme, notifications (sliders with units, collapsible thresholds)
 - **Multi-language UI** (English, French)
 
 ---
@@ -130,12 +131,18 @@ The secret is shown only on generation. Lose it = regenerate it.
 
 The integration tests the connection. On success, an **OPNsense** device appears with ~30 entities.
 
-### Polling interval & WAN interface
+### Configuration menu
 
-Change the polling rate and the WAN interface at any time without reinstalling:
+**Settings → Devices & Services → OPNsense → ⚙ Configure** opens a three-screen
+menu, changeable at runtime without reinstalling:
 
-**Settings → Devices & Services → OPNsense → ⚙ Configure** → set the polling
-interval (30-600 s) and the WAN interface.
+| Screen | Settings |
+|---|---|
+| ⚡ Refresh and WAN interface | real-time on/off, real-time update rate, fast polling (2-60 s), slow polling (30-600 s), WAN interface |
+| 🎨 Dashboard and theme | dashboard creation, theme (Graphite, Aurora, Cockpit) |
+| 🔔 Notifications and alerts | alerts, recipients, persistent notification, and a collapsed **Thresholds** section (WAN delay, latency, temperature) |
+
+Each screen only saves its own settings; the others are kept.
 
 ### If your API key changes
 
@@ -145,15 +152,26 @@ integration reloads. You can also use **⋮ → Reconfigure** to change host/por
 
 ---
 
-## 🖥️ Ready-made dashboard (Console)
+## 🖥️ Ready-made dashboard, three themes
 
 **Automatic** - on setup, the integration creates a polished **OPNsense**
-dashboard in the sidebar, styled like a monitoring console (server-rack photo
-background, smoked-glass panels, monospace figures, OPNsense orange accent,
-"Real-time" band on top): a status banner that turns red when the WAN drops,
-throughput/CPU/RAM tiles with sparklines, a 24 h WAN traffic chart, latency/loss
-and services health, a VPN tunnels table, a disk bar and ranked top destinations
-with proportional bars. Each firewall gets its own dashboard (`opnsense`,
+dashboard in the sidebar: a status banner that turns red when the WAN drops,
+a "Real-time" band (throughput, latency, CPU) with sparklines, a 24 h WAN
+traffic chart, packet loss, services and firmware, CPU / SFP **temperatures**
+with a colour-coded meter, RAM and disk meters, ranked top destinations with
+proportional bars, VPN tunnels and WAN volumes.
+
+Three themes to choose from in **⚙ Configure → Dashboard and theme** (the
+dashboard is regenerated right away):
+
+| Theme | Style |
+|---|---|
+| **Graphite** *(default)* | calm and matte, a single bright accent (OPNsense orange) |
+| **Aurora** | gradient glows in the background, soft glass cards |
+| **Cockpit** | instruments, big monospace figures, amber and cyan |
+
+A state is never conveyed by colour alone: it always comes with a text or an
+icon. Each firewall gets its own dashboard (`opnsense`,
 `opnsense-2`...). It is built from your **real
 entity IDs**, so it works whatever your Home Assistant language is. Disable it
 any time via **OPNsense → ⚙ Configure → Create an OPNsense dashboard in the
@@ -211,6 +229,7 @@ your phone(s). No automation to write.
 | Service stopped / restarted | A service stops (services already stopped at startup are ignored) |
 | VPN tunnel down / restored | A WireGuard / IPsec / OpenVPN tunnel changes state |
 | Disk almost full | Root partition above 90 % (re-armed below 85 %) |
+| High CPU temperature | CPU above the threshold (80 °C by default), then back below threshold minus 5 °C |
 
 > 💡 While the WAN is down, a mobile push cannot leave your home (it goes
 > through Apple/Google) - except with the Companion app's **local push** on
@@ -236,6 +255,7 @@ prefer (`{{ title }}` / `{{ message }}` are available).
 - `sensor.opnsense_cpu_load_1_min`
 - `sensor.opnsense_ram_used_percent`
 - `sensor.opnsense_disk_root_percent`
+- `sensor.opnsense_cpu_temperature` / `sensor.opnsense_sfp_temperature` *(v2.1)*
 - `sensor.opnsense_uptime`
 - `sensor.opnsense_last_boot`
 - `sensor.opnsense_public_ipv4`

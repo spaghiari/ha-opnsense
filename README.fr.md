@@ -22,6 +22,7 @@ Une intégration custom Home Assistant qui expose votre **firewall OPNsense** so
 - **Uptime + date du dernier démarrage**
 - **Hostname** + **modèle CPU**
 - **Versions OPNsense / FreeBSD / OpenSSL**
+- **Températures** *(v2.1)* - CPU (sonde la plus chaude) et modules SFP, détail de chaque sonde en attributs
 
 ### Monitoring WAN
 - **Adresses IP publiques** IPv4 et IPv6
@@ -43,7 +44,7 @@ Une intégration custom Home Assistant qui expose votre **firewall OPNsense** so
 
 ### Configuration
 - **Installation via UI** - pas de YAML
-- **Intervalle de polling configurable** à chaud (30 à 600 secondes)
+- **Menu de configuration** en trois écrans *(v2.1)* : rafraîchissement, dashboard et thème, notifications (curseurs avec unités, seuils repliables)
 - **Interface multilingue** (français, anglais)
 
 ---
@@ -130,13 +131,18 @@ Le secret n'est affiché qu'à la génération. Si perdu = régénérer.
 
 L'intégration teste la connexion. En cas de succès, un appareil **OPNsense** apparaît avec ~30 entités.
 
-### Intervalle de polling & interface WAN
+### Menu de configuration
 
-Modifiez la fréquence de polling et l'interface WAN à tout moment, sans
-réinstaller :
+**Paramètres → Appareils et services → OPNsense → ⚙ Configurer** ouvre un menu
+à trois écrans, modifiables à chaud sans réinstaller :
 
-**Paramètres → Appareils et services → OPNsense → ⚙ Configurer** → intervalle
-(30-600 s) et interface WAN.
+| Écran | Réglages |
+|---|---|
+| ⚡ Rafraîchissement et interface WAN | temps réel on/off, cadence du temps réel, polling rapide (2-60 s), polling lent (30-600 s), interface WAN |
+| 🎨 Dashboard et thème | création du dashboard, choix du thème (Graphite, Aurore, Cockpit) |
+| 🔔 Notifications et alertes | alertes, destinataires, notification persistante, et une section **Seuils** repliée (délai WAN, latence, température) |
+
+Chaque écran n'enregistre que ses propres réglages ; les autres sont conservés.
 
 ### Si votre clé API change
 
@@ -147,15 +153,26 @@ clé/secret et l'intégration se recharge. Vous pouvez aussi utiliser
 
 ---
 
-## 🖥️ Dashboard prêt à l'emploi (Console)
+## 🖥️ Dashboard prêt à l'emploi, trois thèmes
 
 **Automatique** - à l'installation, l'intégration crée un dashboard **OPNsense**
-façon pupitre de supervision dans la barre latérale (fond photo de baie
-serveurs, panneaux en verre fumé, chiffres en monospace, accent orange
-OPNsense, bande « Temps réel » en tête) : bandeau d'état qui vire au rouge si le WAN
-tombe, tuiles débit/CPU/RAM avec sparkline, courbe de trafic WAN sur 24 h,
-latence/pertes et santé des services, tableau des tunnels VPN, barre de
-remplissage disque et top destinations classées avec barres au prorata. Chaque
+façon pupitre de supervision dans la barre latérale : bandeau d'état qui vire au rouge si le WAN tombe,
+bande « Temps réel » (débit, latence, CPU) avec sparklines, courbe de trafic
+WAN sur 24 h, pertes, services et firmware, **températures** CPU / SFP avec
+jauge colorée, RAM et disque en jauges, top destinations classées avec barres
+au prorata, tunnels VPN et volumes WAN.
+
+Trois thèmes au choix dans **⚙ Configurer → Dashboard et thème** (le
+dashboard est régénéré aussitôt) :
+
+| Thème | Style |
+|---|---|
+| **Graphite** *(par défaut)* | sobre et mat, une seule couleur vive (orange OPNsense) |
+| **Aurore** | lueurs dégradées en arrière-plan, cartes en verre doux |
+| **Cockpit** | instruments, gros chiffres en monospace, ambre et cyan |
+
+Un état n'est jamais porté par la seule couleur : il est toujours doublé d'un
+texte ou d'une icône. Chaque
 pare-feu a son propre dashboard (`opnsense`, `opnsense-2`...). Il est
 construit à partir de tes **vrais entity_id**, donc il fonctionne quelle que
 soit la langue de ton Home Assistant. Désactivable à tout moment via
@@ -215,6 +232,7 @@ choisis ton ou tes téléphones. Aucune automatisation à écrire.
 | Service arrêté / relancé | Un service s'arrête (ceux déjà arrêtés au démarrage sont ignorés) |
 | Tunnel VPN coupé / rétabli | Un tunnel WireGuard / IPsec / OpenVPN change d'état |
 | Disque presque plein | Partition racine au-dessus de 90 % (réarmé sous 85 %) |
+| Température CPU élevée | CPU au-dessus du seuil (80 °C par défaut), puis retour sous le seuil moins 5 °C |
 
 > 💡 Pendant une coupure du WAN, une notification push ne peut pas sortir de
 > chez toi (elle passe par Apple/Google), sauf en **local push** de l'app
@@ -240,6 +258,7 @@ mobile si tu préfères (`{{ title }}` / `{{ message }}` sont disponibles).
 - `sensor.opnsense_charge_cpu_1_min`
 - `sensor.opnsense_ram_utilisee_percent`
 - `sensor.opnsense_disque_root_percent`
+- `sensor.opnsense_temperature_cpu` / `sensor.opnsense_temperature_sfp` *(v2.1)*
 - `sensor.opnsense_uptime`
 - `sensor.opnsense_dernier_demarrage`
 - `sensor.opnsense_ip_publique_ipv4`
