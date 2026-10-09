@@ -60,28 +60,91 @@
   "options": {
     "step": {
       "init": {
-        "title": "Options OPNsense",
-        "description": "Le rafraîchissement fonctionne à trois vitesses : temps réel (flux poussés par OPNsense), polling rapide et polling lent. Choisis aussi l'interface WAN et le dashboard de la barre latérale.",
+        "title": "OPNsense",
+        "description": "Que veux-tu régler ?",
+        "menu_options": {
+          "refresh": "⚡ Rafraîchissement et interface WAN",
+          "dashboard": "🎨 Dashboard et thème",
+          "notifications": "🔔 Notifications et alertes"
+        }
+      },
+      "refresh": {
+        "title": "Rafraîchissement",
+        "description": "Les données arrivent à trois vitesses : temps réel (flux poussés par OPNsense), rapide et lent.",
         "data": {
-          "scan_interval": "Rafraîchissement lent : firmware, système, disque, services (secondes)",
-          "realtime": "Temps réel : débit WAN et CPU % poussés par OPNsense",
-          "live_publish": "Temps réel : mettre à jour Home Assistant toutes les (secondes)",
-          "fast_interval": "Rafraîchissement rapide : WAN, latence, tunnels VPN, compteurs (secondes)",
-          "wan_interface": "Interface WAN",
-          "create_dashboard": "Créer un dashboard OPNsense dans la barre latérale"
+          "realtime": "Temps réel",
+          "live_publish": "Mise à jour du temps réel",
+          "fast_interval": "Rafraîchissement rapide",
+          "scan_interval": "Rafraîchissement lent",
+          "wan_interface": "Interface WAN"
+        },
+        "data_description": {
+          "realtime": "Débit WAN et CPU % poussés en continu par OPNsense (aucun droit API supplémentaire).",
+          "live_publish": "Fréquence à laquelle Home Assistant affiche les valeurs temps réel. Plus court = plus vivant, plus d'écritures en base.",
+          "fast_interval": "État du WAN, IP publiques, latence, pertes, tunnels VPN, températures.",
+          "scan_interval": "Firmware, système, disque, RAM, services, top destinations.",
+          "wan_interface": "L'auto-détection convient presque toujours."
+        }
+      },
+      "dashboard": {
+        "title": "Dashboard",
+        "description": "Le dashboard OPNsense de la barre latérale. Changer de thème le régénère aussitôt (tes modifications manuelles dessus sont remplacées).",
+        "data": {
+          "create_dashboard": "Créer le dashboard OPNsense",
+          "dashboard_theme": "Thème"
+        },
+        "data_description": {
+          "create_dashboard": "Désactive pour gérer ton propre dashboard sans qu'il soit écrasé."
         }
       },
       "notifications": {
         "title": "Notifications",
-        "description": "Alertes OPNsense intégrées. Le message « WAN rétabli » indique la durée de la coupure : pendant une coupure, une notification push ne peut pas sortir de chez toi (sauf en local push sur le Wi-Fi de la maison).",
+        "description": "Alertes envoyées par l'intégration elle-même, sans automatisation à écrire.",
         "data": {
           "alerts": "Alertes à envoyer",
-          "notify_targets": "Envoyer à (téléphones / services notify)",
-          "notify_persistent": "Créer aussi une notification persistante dans Home Assistant",
-          "wan_down_delay": "Délai avant l'alerte « WAN coupé » (minutes)",
-          "latency_threshold": "Seuil de latence (ms)",
-          "latency_duration": "Durée au-dessus du seuil de latence (minutes)"
+          "notify_targets": "Envoyer à",
+          "notify_persistent": "Notification persistante dans Home Assistant"
+        },
+        "data_description": {
+          "notify_targets": "Pendant une coupure du WAN, un push ne sort pas de chez toi (sauf local push sur le Wi-Fi maison) : le message « WAN rétabli », lui, arrive toujours avec la durée de la coupure.",
+          "notify_persistent": "Visible dans la cloche de Home Assistant, même sans internet."
+        },
+        "sections": {
+          "thresholds": {
+            "name": "Seuils",
+            "description": "Quand déclencher les alertes.",
+            "data": {
+              "wan_down_delay": "Délai avant « WAN coupé »",
+              "latency_threshold": "Seuil de latence",
+              "latency_duration": "Durée au-dessus du seuil de latence",
+              "temp_threshold": "Seuil de température CPU"
+            },
+            "data_description": {
+              "wan_down_delay": "Évite les alertes pour une micro-coupure.",
+              "temp_threshold": "Alerte réarmée 5 °C en dessous."
+            }
+          }
         }
+      }
+    }
+  },
+  "selector": {
+    "dashboard_theme": {
+      "options": {
+        "graphite": "Graphite · sobre et mat, une seule couleur vive",
+        "aurore": "Aurore · lueurs dégradées et verre doux",
+        "cockpit": "Cockpit · instruments, gros chiffres, ambre et cyan"
+      }
+    },
+    "alerts": {
+      "options": {
+        "wan": "WAN coupé / rétabli (avec durée)",
+        "latency": "Latence WAN élevée",
+        "firmware": "Mise à jour firmware disponible",
+        "services": "Service arrêté / relancé",
+        "vpn": "Tunnel VPN coupé / rétabli",
+        "disk": "Disque presque plein (> 90 %)",
+        "temperature": "Température CPU élevée"
       }
     }
   },
@@ -105,6 +168,8 @@
       "loadavg_5": { "name": "Charge CPU 5 min" },
       "loadavg_15": { "name": "Charge CPU 15 min" },
       "cpu_usage": { "name": "CPU utilisé" },
+      "temp_cpu": { "name": "Température CPU" },
+      "temp_sfp": { "name": "Température SFP" },
       "public_ipv4": { "name": "IP publique IPv4" },
       "public_ipv6": { "name": "IP publique IPv6" },
       "wan_status": { "name": "Statut WAN" },

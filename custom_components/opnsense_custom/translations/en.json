@@ -60,28 +60,91 @@
   "options": {
     "step": {
       "init": {
-        "title": "OPNsense options",
-        "description": "Refresh runs at three speeds: real-time (live streams from OPNsense), fast and slow polling. Also pick the WAN interface and the sidebar dashboard.",
+        "title": "OPNsense",
+        "description": "What do you want to configure?",
+        "menu_options": {
+          "refresh": "⚡ Refresh and WAN interface",
+          "dashboard": "🎨 Dashboard and theme",
+          "notifications": "🔔 Notifications and alerts"
+        }
+      },
+      "refresh": {
+        "title": "Refresh",
+        "description": "Data arrives at three speeds: real-time (pushed by OPNsense), fast and slow.",
         "data": {
-          "scan_interval": "Slow refresh: firmware, system, disk, services (seconds)",
-          "realtime": "Real-time: WAN throughput and CPU % pushed by OPNsense",
-          "live_publish": "Real-time: update Home Assistant every (seconds)",
-          "fast_interval": "Fast refresh: WAN, latency, VPN tunnels, counters (seconds)",
-          "wan_interface": "WAN interface",
-          "create_dashboard": "Create an OPNsense dashboard in the sidebar"
+          "realtime": "Real-time",
+          "live_publish": "Real-time update interval",
+          "fast_interval": "Fast refresh",
+          "scan_interval": "Slow refresh",
+          "wan_interface": "WAN interface"
+        },
+        "data_description": {
+          "realtime": "WAN throughput and CPU % continuously pushed by OPNsense (no extra API privilege).",
+          "live_publish": "How often Home Assistant shows real-time values. Shorter = livelier, more database writes.",
+          "fast_interval": "WAN state, public IPs, latency, packet loss, VPN tunnels, temperatures.",
+          "scan_interval": "Firmware, system, disk, RAM, services, top destinations.",
+          "wan_interface": "Auto-detection almost always works."
+        }
+      },
+      "dashboard": {
+        "title": "Dashboard",
+        "description": "The OPNsense sidebar dashboard. Changing the theme regenerates it right away (manual edits are replaced).",
+        "data": {
+          "create_dashboard": "Create the OPNsense dashboard",
+          "dashboard_theme": "Theme"
+        },
+        "data_description": {
+          "create_dashboard": "Turn off to manage your own dashboard without it being overwritten."
         }
       },
       "notifications": {
         "title": "Notifications",
-        "description": "Built-in OPNsense alerts. The \"WAN restored\" message includes the outage duration: while the WAN is down, a mobile push cannot leave your home (except local push on your home Wi-Fi).",
+        "description": "Alerts sent by the integration itself, no automation to write.",
         "data": {
           "alerts": "Alerts to send",
-          "notify_targets": "Send to (phones / notify services)",
-          "notify_persistent": "Also create a Home Assistant persistent notification",
-          "wan_down_delay": "Delay before the \"WAN down\" alert (minutes)",
-          "latency_threshold": "Latency threshold (ms)",
-          "latency_duration": "Time above the latency threshold (minutes)"
+          "notify_targets": "Send to",
+          "notify_persistent": "Home Assistant persistent notification"
+        },
+        "data_description": {
+          "notify_targets": "While the WAN is down a push cannot leave your home (except local push on your home Wi-Fi): the \"WAN restored\" message always gets through, with the outage duration.",
+          "notify_persistent": "Shown in the Home Assistant bell, even without internet."
+        },
+        "sections": {
+          "thresholds": {
+            "name": "Thresholds",
+            "description": "When alerts fire.",
+            "data": {
+              "wan_down_delay": "Delay before \"WAN down\"",
+              "latency_threshold": "Latency threshold",
+              "latency_duration": "Time above the latency threshold",
+              "temp_threshold": "CPU temperature threshold"
+            },
+            "data_description": {
+              "wan_down_delay": "Avoids alerts for a micro-outage.",
+              "temp_threshold": "Re-armed 5 °C below."
+            }
+          }
         }
+      }
+    }
+  },
+  "selector": {
+    "dashboard_theme": {
+      "options": {
+        "graphite": "Graphite · calm and matte, one bright accent",
+        "aurore": "Aurora · gradient glows and soft glass",
+        "cockpit": "Cockpit · instruments, big figures, amber and cyan"
+      }
+    },
+    "alerts": {
+      "options": {
+        "wan": "WAN down / restored (with duration)",
+        "latency": "High WAN latency",
+        "firmware": "Firmware update available",
+        "services": "Service stopped / restarted",
+        "vpn": "VPN tunnel down / restored",
+        "disk": "Disk almost full (> 90 %)",
+        "temperature": "High CPU temperature"
       }
     }
   },
@@ -105,6 +168,8 @@
       "loadavg_5": { "name": "CPU load 5 min" },
       "loadavg_15": { "name": "CPU load 15 min" },
       "cpu_usage": { "name": "CPU usage" },
+      "temp_cpu": { "name": "CPU temperature" },
+      "temp_sfp": { "name": "SFP temperature" },
       "public_ipv4": { "name": "Public IPv4" },
       "public_ipv6": { "name": "Public IPv6" },
       "wan_status": { "name": "WAN status" },

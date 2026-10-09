@@ -13,8 +13,13 @@ from homeassistant.config_entries import (
     OptionsFlow,
 )
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -28,16 +33,12 @@ from .api import (
     OPNsenseForbiddenError,
 )
 from .const import (
-    ALERT_DISK,
-    ALERT_FIRMWARE,
-    ALERT_LATENCY,
-    ALERT_SERVICES,
-    ALERT_VPN,
-    ALERT_WAN,
+    ALERT_TYPES,
     CONF_ALERTS,
     CONF_API_KEY,
     CONF_API_SECRET,
     CONF_CREATE_DASHBOARD,
+    CONF_DASHBOARD_THEME,
     CONF_FAST_INTERVAL,
     CONF_HOST,
     CONF_LATENCY_DURATION,
@@ -48,11 +49,14 @@ from .const import (
     CONF_PORT,
     CONF_REALTIME,
     CONF_SCAN_INTERVAL,
+    CONF_TEMP_THRESHOLD,
     CONF_VERIFY_SSL,
     CONF_WAN_DOWN_DELAY,
     CONF_WAN_INTERFACE,
+    DASHBOARD_THEMES,
     DEFAULT_ALERTS,
     DEFAULT_CREATE_DASHBOARD,
+    DEFAULT_DASHBOARD_THEME,
     DEFAULT_FAST_INTERVAL,
     DEFAULT_LATENCY_DURATION,
     DEFAULT_LATENCY_THRESHOLD,
@@ -61,6 +65,7 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_REALTIME,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TEMP_THRESHOLD,
     DEFAULT_VERIFY_SSL,
     DEFAULT_WAN_DOWN_DELAY,
     DOMAIN,
@@ -312,105 +317,148 @@ class OPNsenseConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class OPNsenseOptionsFlow(OptionsFlow):
-    """Permet de modifier l'intervalle de polling et l'interface WAN."""
+    """Configuration après installation : un menu, trois écrans thématiques.
+
+    Chaque écran enregistre ses propres réglages et conserve les autres.
+    """
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Mémorise l'entry pour relire les options actuelles."""
         self._entry = config_entry
-        self._options: dict[str, Any] = {}
+
+    def _save(self, user_input: dict[str, Any]) -> ConfigFlowResult:
+        """Enregistre l'écran courant en conservant les autres options."""
+        return self.async_create_entry(
+            title="", data={**self._entry.options, **user_input}
+        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Étape 1 : polling, interface WAN, dashboard."""
+        """Menu principal."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["refresh", "dashboard", "notifications"],
+        )
+
+    async def async_step_refresh(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Rafraîchissement : temps réel, rapide, lent + interface WAN."""
         if user_input is not None:
-            self._options.update(user_input)
-            return await self.async_step_notifications()
+            return self._save(user_input)
 
-        current_interval = self._entry.options.get(
-            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-        )
-        current_wan = self._entry.options.get(CONF_WAN_INTERFACE, WAN_AUTO)
-        current_dashboard = self._entry.options.get(
-            CONF_CREATE_DASHBOARD, DEFAULT_CREATE_DASHBOARD
-        )
-
-        # Récupère la liste des interfaces depuis les données déjà pollées
+        opts = self._entry.options
         rows = None
-        coordinator = (
-            self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
-        )
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
         if coordinator is not None and coordinator.data:
             # Les interfaces sont lues par le polling rapide (vue fusionnée).
             rows = (coordinator.merged.get("interfaces") or {}).get("rows")
 
-        opts = self._entry.options
-        options_schema = vol.Schema(
+        schema = vol.Schema(
             {
                 vol.Required(
-                    CONF_REALTIME,
-                    default=opts.get(CONF_REALTIME, DEFAULT_REALTIME),
-                ): bool,
+                    CONF_REALTIME, default=opts.get(CONF_REALTIME, DEFAULT_REALTIME)
+                ): BooleanSelector(),
                 vol.Required(
                     CONF_LIVE_PUBLISH,
                     default=opts.get(CONF_LIVE_PUBLISH, DEFAULT_LIVE_PUBLISH),
-                ): vol.All(
-                    int, vol.Range(min=MIN_LIVE_PUBLISH, max=MAX_LIVE_PUBLISH)
-                ),
+                ): _seconds(MIN_LIVE_PUBLISH, MAX_LIVE_PUBLISH),
                 vol.Required(
                     CONF_FAST_INTERVAL,
                     default=opts.get(CONF_FAST_INTERVAL, DEFAULT_FAST_INTERVAL),
-                ): vol.All(
-                    int, vol.Range(min=MIN_FAST_INTERVAL, max=MAX_FAST_INTERVAL)
-                ),
+                ): _seconds(MIN_FAST_INTERVAL, MAX_FAST_INTERVAL),
                 vol.Required(
-                    CONF_SCAN_INTERVAL, default=current_interval
-                ): vol.All(
-                    int,
-                    vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL),
-                ),
+                    CONF_SCAN_INTERVAL,
+                    default=opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                ): _seconds(MIN_SCAN_INTERVAL, MAX_SCAN_INTERVAL, step=30),
                 vol.Required(
-                    CONF_WAN_INTERFACE, default=current_wan
+                    CONF_WAN_INTERFACE,
+                    default=opts.get(CONF_WAN_INTERFACE, WAN_AUTO),
                 ): SelectSelector(
                     SelectSelectorConfig(
                         options=_wan_select_options(rows),
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Required(
-                    CONF_CREATE_DASHBOARD, default=current_dashboard
-                ): bool,
             }
         )
+        return self.async_show_form(step_id="refresh", data_schema=schema)
 
-        return self.async_show_form(
-            step_id="init",
-            data_schema=options_schema,
+    async def async_step_dashboard(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Dashboard : création automatique et thème."""
+        if user_input is not None:
+            return self._save(user_input)
+
+        opts = self._entry.options
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_CREATE_DASHBOARD,
+                    default=opts.get(CONF_CREATE_DASHBOARD, DEFAULT_CREATE_DASHBOARD),
+                ): BooleanSelector(),
+                vol.Required(
+                    CONF_DASHBOARD_THEME,
+                    default=opts.get(CONF_DASHBOARD_THEME, DEFAULT_DASHBOARD_THEME),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=list(DASHBOARD_THEMES),
+                        mode=SelectSelectorMode.LIST,
+                        translation_key=CONF_DASHBOARD_THEME,
+                    )
+                ),
+            }
         )
+        return self.async_show_form(step_id="dashboard", data_schema=schema)
 
     async def async_step_notifications(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Étape 2 : alertes intégrées et destinataires."""
+        """Notifications : alertes, destinataires et seuils (section repliée)."""
         if user_input is not None:
-            self._options.update(user_input)
-            return self.async_create_entry(title="", data=self._options)
+            # La section "Seuils" arrive imbriquée : on l'aplatit.
+            flat = dict(user_input)
+            flat.update(flat.pop("thresholds", {}) or {})
+            return self._save(flat)
 
         opts = self._entry.options
-        # Sans option enregistrée, on pré-coche la sélection recommandée.
-        current_alerts = opts.get(CONF_ALERTS, DEFAULT_ALERTS)
+        thresholds = vol.Schema(
+            {
+                vol.Required(
+                    CONF_WAN_DOWN_DELAY,
+                    default=opts.get(CONF_WAN_DOWN_DELAY, DEFAULT_WAN_DOWN_DELAY),
+                ): _number(1, 60, "min"),
+                vol.Required(
+                    CONF_LATENCY_THRESHOLD,
+                    default=opts.get(CONF_LATENCY_THRESHOLD, DEFAULT_LATENCY_THRESHOLD),
+                ): _number(10, 1000, "ms", step=10),
+                vol.Required(
+                    CONF_LATENCY_DURATION,
+                    default=opts.get(CONF_LATENCY_DURATION, DEFAULT_LATENCY_DURATION),
+                ): _number(1, 60, "min"),
+                vol.Required(
+                    CONF_TEMP_THRESHOLD,
+                    default=opts.get(CONF_TEMP_THRESHOLD, DEFAULT_TEMP_THRESHOLD),
+                ): _number(40, 110, "°C"),
+            }
+        )
         schema = vol.Schema(
             {
-                vol.Optional(CONF_ALERTS, default=current_alerts): SelectSelector(
+                # Sans option enregistrée, on pré-coche la sélection recommandée.
+                vol.Optional(
+                    CONF_ALERTS, default=opts.get(CONF_ALERTS, DEFAULT_ALERTS)
+                ): SelectSelector(
                     SelectSelectorConfig(
-                        options=_ALERT_OPTIONS,
+                        options=list(ALERT_TYPES),
                         multiple=True,
                         mode=SelectSelectorMode.LIST,
+                        translation_key=CONF_ALERTS,
                     )
                 ),
                 vol.Optional(
-                    CONF_NOTIFY_TARGETS,
-                    default=opts.get(CONF_NOTIFY_TARGETS, []),
+                    CONF_NOTIFY_TARGETS, default=opts.get(CONF_NOTIFY_TARGETS, [])
                 ): SelectSelector(
                     SelectSelectorConfig(
                         options=_notify_options(self.hass),
@@ -420,41 +468,31 @@ class OPNsenseOptionsFlow(OptionsFlow):
                 ),
                 vol.Required(
                     CONF_NOTIFY_PERSISTENT,
-                    default=opts.get(
-                        CONF_NOTIFY_PERSISTENT, DEFAULT_NOTIFY_PERSISTENT
-                    ),
-                ): bool,
-                vol.Required(
-                    CONF_WAN_DOWN_DELAY,
-                    default=opts.get(CONF_WAN_DOWN_DELAY, DEFAULT_WAN_DOWN_DELAY),
-                ): vol.All(int, vol.Range(min=1, max=60)),
-                vol.Required(
-                    CONF_LATENCY_THRESHOLD,
-                    default=opts.get(
-                        CONF_LATENCY_THRESHOLD, DEFAULT_LATENCY_THRESHOLD
-                    ),
-                ): vol.All(int, vol.Range(min=10, max=2000)),
-                vol.Required(
-                    CONF_LATENCY_DURATION,
-                    default=opts.get(
-                        CONF_LATENCY_DURATION, DEFAULT_LATENCY_DURATION
-                    ),
-                ): vol.All(int, vol.Range(min=1, max=60)),
+                    default=opts.get(CONF_NOTIFY_PERSISTENT, DEFAULT_NOTIFY_PERSISTENT),
+                ): BooleanSelector(),
+                vol.Required("thresholds"): section(thresholds, {"collapsed": True}),
             }
         )
         return self.async_show_form(step_id="notifications", data_schema=schema)
 
 
-# Libellés des alertes proposées (même convention que la liste des
-# interfaces : libellés directement en français).
-_ALERT_OPTIONS = [
-    SelectOptionDict(value=ALERT_WAN, label="WAN coupé / rétabli (avec durée)"),
-    SelectOptionDict(value=ALERT_LATENCY, label="Latence WAN élevée"),
-    SelectOptionDict(value=ALERT_FIRMWARE, label="Mise à jour firmware disponible"),
-    SelectOptionDict(value=ALERT_SERVICES, label="Service arrêté / relancé"),
-    SelectOptionDict(value=ALERT_VPN, label="Tunnel VPN coupé / rétabli"),
-    SelectOptionDict(value=ALERT_DISK, label="Disque presque plein (> 90 %)"),
-]
+def _number(minimum: int, maximum: int, unit: str, step: int = 1) -> vol.All:
+    """Curseur numérique avec unité (valeur enregistrée en entier)."""
+    return vol.All(
+        NumberSelector(
+            NumberSelectorConfig(
+                min=minimum, max=maximum, step=step,
+                unit_of_measurement=unit, mode=NumberSelectorMode.SLIDER,
+            )
+        ),
+        vol.Coerce(int),
+    )
+
+
+def _seconds(minimum: int, maximum: int, step: int = 1) -> vol.All:
+    """Curseur en secondes."""
+    return _number(minimum, maximum, "s", step)
+
 
 # Services notify génériques qu'on ne propose pas comme destinataires.
 _NOTIFY_EXCLUDED = {"notify", "persistent_notification", "send_message"}
@@ -470,9 +508,9 @@ def _notify_options(hass) -> list[SelectOptionDict]:
     options = []
     for service in services:
         if service.startswith("mobile_app_"):
-            label = "Téléphone : " + service.removeprefix("mobile_app_").replace(
+            label = "Téléphone · " + service.removeprefix("mobile_app_").replace(
                 "_", " "
-            )
+            ).title()
         else:
             label = f"notify.{service}"
         options.append(SelectOptionDict(value=service, label=label))
