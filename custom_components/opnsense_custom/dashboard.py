@@ -366,7 +366,9 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
     def serie(entity: str, name: str, color: str) -> dict:
         return {"entity": entity, "name": name, "type": "area",
                 "color": color, "stroke_width": 2, "opacity": 0.16,
-                "group_by": {"func": "avg", "duration": "10min"}}
+                # Pic par tranche de 5 min : une moyenne écraserait un burst
+                # de quelques secondes (speedtest, téléchargement).
+                "group_by": {"func": "max", "duration": "5min"}}
 
     chart = {
         "type": "custom:apexcharts-card", "graph_span": "24h",
