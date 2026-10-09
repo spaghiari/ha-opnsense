@@ -144,7 +144,7 @@ def _root_disk_used_percent(data: dict) -> float | None:
     logs, /usr, /var... sont dans d'autres datasets du même pool) : son
     pourcentage reste proche de 0 % sur un gros disque. On calcule donc le
     taux du pool : somme des octets utilisés par ses datasets / (cette somme
-    + espace libre du pool). En UFS, le pourcentage de df est déjà le bon.
+    + espace libre du pool). En UFS, même formule que df sur "/".
     """
     dev = _root_disk(data)
     if not dev:
@@ -168,6 +168,14 @@ def _root_disk_used_percent(data: dict) -> float | None:
             total = 0
         if total > 0:
             return round(used / total * 100, 1)
+    # UFS & co : même calcul que df (utilisé / (utilisé + libre)), mais avec
+    # une décimale - df arrondit à l'entier, 0 % sur un gros disque.
+    try:
+        used, free = int(dev["used_bytes"]), int(dev["available_bytes"])
+        if used + free > 0:
+            return round(used / (used + free) * 100, 1)
+    except (KeyError, TypeError, ValueError):
+        pass
     used_pct = dev.get("used_pct")
     try:
         return float(used_pct) if used_pct is not None else None
