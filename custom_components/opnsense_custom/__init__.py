@@ -40,6 +40,7 @@ from .dashboard import (
     async_unregister_dashboard,
 )
 from .live import OPNsenseLiveCoordinator
+from .repairs import delete_privilege_issues
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -150,8 +151,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Nettoyage à la suppression de l'intégration : supprime le dashboard."""
+    """Nettoyage à la suppression de l'intégration : dashboard et alertes."""
     await async_delete_dashboard(hass, entry)
+    delete_privilege_issues(hass, entry)
 
 
 async def _async_options_updated(

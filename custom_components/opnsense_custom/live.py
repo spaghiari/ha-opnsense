@@ -137,6 +137,10 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 async for event in self.client.async_stream(endpoint, **params):
                     if status["state"] != "streaming":
                         status["state"] = "streaming"
+                        if name == "traffic":
+                            getattr(self.client, "forbidden", set()).discard(
+                                "traffic_stream"
+                            )
                         _LOGGER.info("Flux temps réel '%s' connecté", name)
                     delay = RETRY_MIN
                     status["events"] += 1
@@ -151,6 +155,8 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return
             except OPNsenseForbiddenError as err:
                 status.update(state="forbidden", error=str(err))
+                if name == "traffic":
+                    getattr(self.client, "forbidden", set()).add("traffic_stream")
                 if not forbidden_logged:
                     forbidden_logged = True
                     _LOGGER.warning(

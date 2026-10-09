@@ -72,6 +72,8 @@ class OPNsenseApiClient:
         self._forbidden_logged: set[str] = set()
         # Endpoints en échec (hors 403) depuis le dernier succès.
         self._failing: set[str] = set()
+        # Endpoints refusés (403) au dernier appel : alertes « Réparations ».
+        self.forbidden: set[str] = set()
 
     async def _request(
         self,
@@ -171,6 +173,7 @@ class OPNsenseApiClient:
             if isinstance(result, OPNsenseForbiddenError):
                 # Privilège manquant sur CET endpoint : on dégrade proprement
                 # (les autres capteurs continuent de fonctionner).
+                self.forbidden.add(key)
                 if key not in self._forbidden_logged:
                     self._forbidden_logged.add(key)
                     log = (_LOGGER.debug if key in OPTIONAL_ENDPOINTS
@@ -192,6 +195,7 @@ class OPNsenseApiClient:
                     )
                 data[key] = None
             else:
+                self.forbidden.discard(key)
                 if key in self._failing:
                     self._failing.discard(key)
                     _LOGGER.info("'%s' de nouveau disponible", key)

@@ -152,6 +152,12 @@
       }
     }
   },
+  "issues": {
+    "missing_privilege": {
+      "title": "OPNsense: missing API privilege \"{privilege}\"",
+      "description": "The Home Assistant API user on {host} lacks the **{privilege}** privilege. Without it the integration runs in reduced mode: {impact}.\n\nTo fix it: in OPNsense, System → Access → Users, edit the API user, add **{privilege}** to \"Effective Privileges\" and save. This alert clears itself on the next refresh.\n\nIf you don't need this feature, just ignore the alert."
+    }
+  },
   "entity": {
     "sensor": {
       "hostname": { "name": "Hostname" },

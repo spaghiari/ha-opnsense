@@ -27,6 +27,7 @@ from .const import (
     SLOW_ENDPOINTS,
     WAN_AUTO,
 )
+from .repairs import sync_privilege_issues
 from .wans import default_link, gateway_groups, wan_links
 
 _LOGGER = logging.getLogger(__name__)
@@ -227,6 +228,9 @@ class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 traffic = {DEFAULT_WAN_IDENTIFIER: values[0]} if values else None
             self._top = traffic
         data["traffic_wan"] = self._top
+        sync_privilege_issues(
+            self.hass, self.entry, getattr(self.client, "forbidden", set())
+        )
 
         # Débit moyen depuis le cycle précédent, à partir des compteurs.
         now = monotonic()
@@ -311,4 +315,7 @@ class OPNsenseDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Impossible de récupérer system_information - "
                 "vérifier les privilèges API"
             )
+        sync_privilege_issues(
+            self.hass, self.entry, getattr(self.client, "forbidden", set())
+        )
         return data

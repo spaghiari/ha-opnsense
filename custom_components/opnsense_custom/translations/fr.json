@@ -152,6 +152,12 @@
       }
     }
   },
+  "issues": {
+    "missing_privilege": {
+      "title": "OPNsense : droit API « {privilege} » manquant",
+      "description": "L'utilisateur API de Home Assistant sur {host} n'a pas le droit **{privilege}**. Sans lui, l'intégration fonctionne en mode réduit : {impact}.\n\nPour corriger : dans OPNsense, Système → Accès → Utilisateurs, ouvre l'utilisateur de l'API, ajoute **{privilege}** dans « Privilèges effectifs », enregistre. Cette alerte disparaît toute seule au rafraîchissement suivant.\n\nSi tu ne veux pas de cette fonction, ignore simplement l'alerte."
+    }
+  },
   "entity": {
     "sensor": {
       "hostname": { "name": "Hostname" },
