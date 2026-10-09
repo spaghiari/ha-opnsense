@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import (
 from .api import OPNsenseApiClient, OPNsenseApiError, OPNsenseAuthError
 from .const import (
     DEFAULT_MODEL,
+    DEFAULT_TOP_INTERVAL,
     DEFAULT_WAN_IDENTIFIER,
     DOMAIN,
     FAST_ENDPOINTS,
@@ -155,6 +156,7 @@ class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         entry: ConfigEntry,
         wan_interface: str = WAN_AUTO,
         wan_exclude: list[str] | None = None,
+        top_interval: int = DEFAULT_TOP_INTERVAL,
     ) -> None:
         """Initialise le coordinator rapide."""
         super().__init__(
@@ -171,11 +173,19 @@ class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Identifiants de config des liens WAN (flux temps réel : somme).
         self.wan_identifiers: list[str] = [DEFAULT_WAN_IDENTIFIER]
         self._prev_counters: dict[str, tuple[float, int, int]] = {}
+        # Top destinations : interrogées toutes les `top_interval` secondes,
+        # la dernière réponse est reprise entre deux.
+        self.top_interval = top_interval
+        self._top: dict[str, Any] | None = None
+        self._top_at: float | None = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Appelé toutes les `fast_interval` secondes."""
+        top_due = (self._top_at is None
+                   or monotonic() - self._top_at >= self.top_interval)
+        keys = (*FAST_ENDPOINTS, "traffic_wan") if top_due else FAST_ENDPOINTS
         try:
-            data = await self.client.async_get_all(keys=FAST_ENDPOINTS)
+            data = await self.client.async_get_all(self.wan_identifier, keys=keys)
         except OPNsenseAuthError as err:
             raise ConfigEntryAuthFailed(
                 "Clé API OPNsense invalide - reconfiguration nécessaire"
@@ -205,6 +215,18 @@ class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data["_wan_identifier"] = self.wan_identifier
         ids = [link["id"] for link in links if link.get("id")]
         self.wan_identifiers = ids or [self.wan_identifier]
+
+        # Top destinations : la réponse est indexée par l'identifiant
+        # d'interface interrogé ; on la ramène sous la clé "wan" attendue par
+        # les capteurs.
+        if top_due:
+            self._top_at = monotonic()
+            traffic = data.get("traffic_wan")
+            if isinstance(traffic, dict) and DEFAULT_WAN_IDENTIFIER not in traffic:
+                values = [v for v in traffic.values() if isinstance(v, dict)]
+                traffic = {DEFAULT_WAN_IDENTIFIER: values[0]} if values else None
+            self._top = traffic
+        data["traffic_wan"] = self._top
 
         # Débit moyen depuis le cycle précédent, à partir des compteurs.
         now = monotonic()
@@ -275,9 +297,8 @@ class OPNsenseDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Appelé toutes les `scan_interval` secondes."""
-        identifier = self.fast.wan_identifier
         try:
-            data = await self.client.async_get_all(identifier, keys=SLOW_ENDPOINTS)
+            data = await self.client.async_get_all(keys=SLOW_ENDPOINTS)
         except OPNsenseAuthError as err:
             raise ConfigEntryAuthFailed(
                 "Clé API OPNsense invalide - reconfiguration nécessaire"
@@ -290,14 +311,4 @@ class OPNsenseDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Impossible de récupérer system_information - "
                 "vérifier les privilèges API"
             )
-
-        # La réponse top/{iface} est indexée par l'identifiant d'interface :
-        # on la ramène sous la clé "wan" attendue par les capteurs.
-        traffic = data.get("traffic_wan")
-        if (
-            isinstance(traffic, dict)
-            and identifier != DEFAULT_WAN_IDENTIFIER
-            and identifier in traffic
-        ):
-            data["traffic_wan"] = {DEFAULT_WAN_IDENTIFIER: traffic[identifier]}
         return data

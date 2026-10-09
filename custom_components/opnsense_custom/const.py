@@ -83,6 +83,12 @@ CONF_FAST_INTERVAL = "fast_interval"
 DEFAULT_FAST_INTERVAL = 10
 MIN_FAST_INTERVAL = 2
 MAX_FAST_INTERVAL = 60
+# Top destinations : capture iftop de 2 s côté OPNsense, à son propre rythme
+# (porté par le polling rapide, mais pas à chaque cycle).
+CONF_TOP_INTERVAL = "top_interval"
+DEFAULT_TOP_INTERVAL = 10
+MIN_TOP_INTERVAL = 10
+MAX_TOP_INTERVAL = 300
 CONF_REALTIME = "realtime"
 DEFAULT_REALTIME = True
 CONF_LIVE_PUBLISH = "live_publish"
@@ -138,7 +144,7 @@ FAST_ENDPOINTS = (
 OPTIONAL_ENDPOINTS = ("gateway_groups",)
 SLOW_ENDPOINTS = (
     "firmware_status", "system_information", "system_resources",
-    "system_disk", "system_time", "cpu_type", "traffic_wan", "services",
+    "system_disk", "system_time", "cpu_type", "services",
 )
 
 # Identifiant de config OPNsense par défaut de l'interface WAN (avant la

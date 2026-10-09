@@ -76,6 +76,7 @@
           "live_publish": "Mise à jour du temps réel",
           "fast_interval": "Rafraîchissement rapide",
           "scan_interval": "Rafraîchissement lent",
+          "top_interval": "Top destinations",
           "wan_interface": "WAN principal",
           "wan_exclude": "WAN à ignorer"
         },
@@ -83,7 +84,8 @@
           "realtime": "Débit WAN et CPU % poussés en continu par OPNsense (aucun droit API supplémentaire).",
           "live_publish": "Fréquence à laquelle Home Assistant affiche les valeurs temps réel. Plus court = plus vivant, plus d'écritures en base.",
           "fast_interval": "État du WAN, IP publiques, latence, pertes, tunnels VPN, températures.",
-          "scan_interval": "Firmware, système, disque, RAM, services, top destinations.",
+          "scan_interval": "Firmware, système, disque, RAM, services.",
+          "top_interval": "Chaque relevé demande à OPNsense une capture de 2 s : plus court = plus réactif, un peu plus de charge sur le pare-feu.",
           "wan_interface": "Auto = le WAN qui porte la route par défaut (suit les bascules). Sert à l'IP publique et aux top destinations.",
           "wan_exclude": "Liens détectés par leur passerelle montante. Un lien ignoré n'a plus d'entités ni d'alertes."
         }

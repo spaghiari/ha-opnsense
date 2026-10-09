@@ -50,6 +50,7 @@ from .const import (
     CONF_REALTIME,
     CONF_SCAN_INTERVAL,
     CONF_TEMP_THRESHOLD,
+    CONF_TOP_INTERVAL,
     CONF_VERIFY_SSL,
     CONF_WAN_DOWN_DELAY,
     CONF_WAN_EXCLUDE,
@@ -67,15 +68,18 @@ from .const import (
     DEFAULT_REALTIME,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TEMP_THRESHOLD,
+    DEFAULT_TOP_INTERVAL,
     DEFAULT_VERIFY_SSL,
     DEFAULT_WAN_DOWN_DELAY,
     DOMAIN,
     MAX_FAST_INTERVAL,
     MAX_LIVE_PUBLISH,
     MAX_SCAN_INTERVAL,
+    MAX_TOP_INTERVAL,
     MIN_FAST_INTERVAL,
     MIN_LIVE_PUBLISH,
     MIN_SCAN_INTERVAL,
+    MIN_TOP_INTERVAL,
     WAN_AUTO,
 )
 from .coordinator import resolve_wan_device
@@ -399,6 +403,10 @@ class OPNsenseOptionsFlow(OptionsFlow):
                     CONF_SCAN_INTERVAL,
                     default=opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
                 ): _seconds(MIN_SCAN_INTERVAL, MAX_SCAN_INTERVAL, step=30),
+                vol.Required(
+                    CONF_TOP_INTERVAL,
+                    default=opts.get(CONF_TOP_INTERVAL, DEFAULT_TOP_INTERVAL),
+                ): _seconds(MIN_TOP_INTERVAL, MAX_TOP_INTERVAL, step=5),
                 vol.Required(
                     CONF_WAN_INTERFACE,
                     default=opts.get(CONF_WAN_INTERFACE, WAN_AUTO),

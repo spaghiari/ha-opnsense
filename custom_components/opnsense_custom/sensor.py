@@ -1206,6 +1206,7 @@ async def async_setup_entry(
 
 # Rythme de rafraîchissement de chaque capteur (les autres : polling lent).
 FAST_SENSORS = {
+    "wan_top_dest_in", "wan_top_dest_out",
     "public_ipv4", "public_ipv6", "wan_status", "wan_total_received",
     "wan_total_transmitted", "wan_latency", "wan_packet_loss", "vpn_tunnels_up",
     "temp_cpu", "temp_sfp",

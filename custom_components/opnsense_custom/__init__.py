@@ -18,6 +18,7 @@ from .const import (
     CONF_PORT,
     CONF_REALTIME,
     CONF_SCAN_INTERVAL,
+    CONF_TOP_INTERVAL,
     CONF_VERIFY_SSL,
     CONF_WAN_EXCLUDE,
     CONF_WAN_INTERFACE,
@@ -26,6 +27,7 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_REALTIME,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TOP_INTERVAL,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     PLATFORMS,
@@ -87,6 +89,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry=entry,
         wan_interface=wan_interface,
         wan_exclude=entry.options.get(CONF_WAN_EXCLUDE) or [],
+        top_interval=entry.options.get(CONF_TOP_INTERVAL, DEFAULT_TOP_INTERVAL),
     )
     coordinator = OPNsenseDataCoordinator(
         hass=hass,
@@ -96,8 +99,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         fast=fast,
     )
 
-    # Premiers refresh - le rapide d'abord : il résout l'interface WAN dont
-    # le lent a besoin (top destinations). Un échec empêche le chargement.
+    # Premiers refresh - le rapide d'abord (interfaces, WAN, top
+    # destinations), puis le lent. Un échec empêche le chargement.
     await fast.async_config_entry_first_refresh()
     await coordinator.async_config_entry_first_refresh()
 
