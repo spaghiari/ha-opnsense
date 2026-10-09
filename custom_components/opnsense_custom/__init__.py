@@ -19,6 +19,7 @@ from .const import (
     CONF_REALTIME,
     CONF_SCAN_INTERVAL,
     CONF_VERIFY_SSL,
+    CONF_WAN_EXCLUDE,
     CONF_WAN_INTERFACE,
     DEFAULT_FAST_INTERVAL,
     DEFAULT_LIVE_PUBLISH,
@@ -85,6 +86,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         interval=fast_interval,
         entry=entry,
         wan_interface=wan_interface,
+        wan_exclude=entry.options.get(CONF_WAN_EXCLUDE) or [],
     )
     coordinator = OPNsenseDataCoordinator(
         hass=hass,
@@ -103,7 +105,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # connaître l'identifiant du WAN ; s'arrête au déchargement de l'entry.
     if realtime:
         live = OPNsenseLiveCoordinator(
-            hass, client, entry, live_publish, lambda: fast.wan_identifier
+            hass, client, entry, live_publish, lambda: fast.wan_identifiers
         )
         coordinator.live = live
         live.start()

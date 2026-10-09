@@ -15,6 +15,7 @@ from .const import (
     DEFAULT_WAN_IDENTIFIER,
     FAST_ENDPOINTS,
     HTTP_TIMEOUT,
+    OPTIONAL_ENDPOINTS,
     SLOW_ENDPOINTS,
 )
 
@@ -172,7 +173,9 @@ class OPNsenseApiClient:
                 # (les autres capteurs continuent de fonctionner).
                 if key not in self._forbidden_logged:
                     self._forbidden_logged.add(key)
-                    _LOGGER.warning(
+                    log = (_LOGGER.debug if key in OPTIONAL_ENDPOINTS
+                           else _LOGGER.warning)
+                    log(
                         "Privilège manquant pour '%s' côté OPNsense: %s "
                         "(message affiché une seule fois)", key, result
                     )
@@ -182,7 +185,9 @@ class OPNsenseApiClient:
                 # d'échecs, pas à chaque cycle.
                 if key not in self._failing:
                     self._failing.add(key)
-                    _LOGGER.warning(
+                    log = (_LOGGER.debug if key in OPTIONAL_ENDPOINTS
+                           else _LOGGER.warning)
+                    log(
                         "Échec de récupération de '%s': %s", key, result
                     )
                 data[key] = None

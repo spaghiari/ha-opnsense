@@ -76,14 +76,16 @@
           "live_publish": "Real-time update interval",
           "fast_interval": "Fast refresh",
           "scan_interval": "Slow refresh",
-          "wan_interface": "WAN interface"
+          "wan_interface": "Main WAN",
+          "wan_exclude": "WANs to ignore"
         },
         "data_description": {
           "realtime": "WAN throughput and CPU % continuously pushed by OPNsense (no extra API privilege).",
           "live_publish": "How often Home Assistant shows real-time values. Shorter = livelier, more database writes.",
           "fast_interval": "WAN state, public IPs, latency, packet loss, VPN tunnels, temperatures.",
           "scan_interval": "Firmware, system, disk, RAM, services, top destinations.",
-          "wan_interface": "Auto-detection almost always works."
+          "wan_interface": "Auto = the WAN carrying the default route (follows failovers). Used for the public IP and top destinations.",
+          "wan_exclude": "Links detected from their upstream gateway. An ignored link gets no entities and no alerts."
         }
       },
       "dashboard": {
@@ -138,7 +140,7 @@
     },
     "alerts": {
       "options": {
-        "wan": "WAN down / restored (with duration)",
+        "wan": "WAN down / restored, multi-WAN failover (with duration)",
         "latency": "High WAN latency",
         "firmware": "Firmware update available",
         "services": "Service stopped / restarted",
@@ -184,11 +186,17 @@
       "wan_latency": { "name": "WAN latency" },
       "wan_packet_loss": { "name": "WAN packet loss" },
       "services_stopped": { "name": "Stopped services" },
-      "vpn_tunnels_up": { "name": "VPN tunnels up" }
+      "vpn_tunnels_up": { "name": "VPN tunnels up" },
+      "link_latency": { "name": "{wan} latency" },
+      "link_packet_loss": { "name": "{wan} packet loss" },
+      "link_throughput_in": { "name": "{wan} throughput in" },
+      "link_throughput_out": { "name": "{wan} throughput out" },
+      "gateway_group": { "name": "{group} group" }
     },
     "binary_sensor": {
       "update_available": { "name": "Update available" },
-      "wan_connected": { "name": "WAN connected" }
+      "wan_connected": { "name": "WAN connected" },
+      "link_connected": { "name": "{wan} connected" }
     },
     "button": {
       "check_updates": { "name": "Check for updates" }

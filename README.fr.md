@@ -37,6 +37,14 @@ Une intégration custom Home Assistant qui expose votre **firewall OPNsense** so
 - **Tunnels VPN** (WireGuard / IPsec / OpenVPN) : nombre de tunnels actifs et détail par tunnel - aucun privilège supplémentaire
 - Le WAN n'a plus besoin de s'appeler `wan` dans OPNsense pour le débit temps réel / top destinations
 
+### Multi-WAN et groupes de passerelles *(v2.3)*
+- **Un WAN = une passerelle montante** (case *Upstream Gateway* d'OPNsense) : les passerelles VPN ne sont jamais prises pour un WAN, et les passerelles IPv4 / IPv6 d'une même interface forment un seul lien
+- **Panne opérateur détectée** : un lien est coupé si son interface est down **ou** si sa passerelle est hors ligne / à 100 % de pertes (avant la v2.3, seul l'état de l'interface comptait)
+- **WAN connecté** = au moins un lien en ligne ; latence et pertes suivent le lien qui porte la route par défaut ; débit et volumes = somme des liens
+- **Avec deux WAN ou plus** : un jeu d'entités par lien (*\<lien\> connecté*, latence, pertes, débit entrant / sortant), créé automatiquement
+- **Groupes de passerelles** : un capteur par groupe, dont l'état est la passerelle qui porte le trafic, avec les membres par niveau en attributs (OPNsense récent, privilège optionnel)
+- **WAN à ignorer** : dans les options, pour écarter un lien (ex. une 4G de secours)
+
 ### Gestion firmware
 - **Entité `update` native** - compare version installée vs disponible, bouton "Installer" en un clic
 - **Bouton "Vérifier les mises à jour"** pour forcer un check à la demande
@@ -72,7 +80,8 @@ Vous devez créer un **utilisateur API dédié avec privilèges minimaux** dans 
 | `System: Firmware` | Version firmware + mises à jour |
 | `System: Status` | Endpoint infos système |
 | `Reporting: Traffic` | Capteurs débit WAN |
-| `Status: Gateways` *(optionnel)* | Latence et pertes de paquets WAN |
+| `System: Gateways` *(optionnel, `Status: Gateways` sur les anciennes versions)* | Liens WAN, panne opérateur, latence et pertes de paquets |
+| `System: Gateway Groups` *(optionnel)* | Capteurs des groupes de passerelles et alertes de bascule |
 | `Status: Services` *(optionnel)* | Capteur des services arrêtés |
 
 > ⚠️ **Ne cochez PAS "All pages"** - ça annulerait l'intérêt d'un utilisateur restreint.
@@ -226,7 +235,7 @@ choisis ton ou tes téléphones. Aucune automatisation à écrire.
 
 | Alerte | Envoyée quand |
 |---|---|
-| WAN coupé / rétabli | WAN coupé plus longtemps que le délai (1 min par défaut) ; le message de retour indique la durée de la coupure |
+| WAN coupé / rétabli | WAN coupé plus longtemps que le délai (1 min par défaut) ; le message de retour indique la durée de la coupure. En multi-WAN : un message par lien, « Internet coupé » quand tous les liens sont tombés, et un message à chaque bascule d'un groupe de passerelles (ou de la route par défaut) |
 | Latence élevée | Latence au-dessus du seuil (100 ms) pendant une durée (5 min), puis retour à la normale |
 | Mise à jour firmware | Une nouvelle version d'OPNsense est disponible |
 | Service arrêté / relancé | Un service s'arrête (ceux déjà arrêtés au démarrage sont ignorés) |

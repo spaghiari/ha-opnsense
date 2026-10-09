@@ -13,6 +13,9 @@ CONF_SCAN_INTERVAL = "scan_interval"
 # Device de l'interface WAN choisie par l'utilisateur (ex: "igc0").
 # Vide => auto-détection (route par défaut / IP publique / description).
 CONF_WAN_INTERFACE = "wan_interface"
+# Interfaces WAN (identifiants OPNsense, ex: "opt2") à ne pas surveiller
+# parmi celles qui portent une passerelle montante (multi-WAN).
+CONF_WAN_EXCLUDE = "wan_exclude"
 # Crée automatiquement un dashboard "OPNsense" dans la barre latérale.
 CONF_CREATE_DASHBOARD = "create_dashboard"
 DEFAULT_CREATE_DASHBOARD = True
@@ -110,6 +113,12 @@ API_ENDPOINTS = {
     # Optionnels (privilèges "Status: Gateways" / "Status: Services") :
     # sans eux, seuls les capteurs latence/pertes/services restent vides.
     "gateway_status": "/api/routes/gateway/status",
+    # Configuration des passerelles (upstream, interface, défaut actif) :
+    # même privilège "System: Gateways" que gateway_status.
+    "gateways": "/api/routing/settings/search_gateway",
+    # Groupes de passerelles (OPNsense récent, privilège "System: Gateway
+    # Groups") : absent ou refusé = pas de capteur de groupe.
+    "gateway_groups": "/api/routing/group_settings/search",
     "services": "/api/core/service/search",
     # Sondes de température (même contrôleur que system_information).
     "system_temperature": "/api/diagnostics/system/system_temperature",
@@ -121,8 +130,12 @@ API_ENDPOINTS = {
 
 # Répartition des endpoints entre les deux coordinators de polling.
 FAST_ENDPOINTS = (
-    "interfaces", "gateway_status", "traffic_totals", "system_temperature",
+    "interfaces", "gateway_status", "gateways", "gateway_groups",
+    "traffic_totals", "system_temperature",
 )
+# Endpoints absents des versions plus anciennes d'OPNsense : un échec est
+# attendu et n'est loggé qu'en debug.
+OPTIONAL_ENDPOINTS = ("gateway_groups",)
 SLOW_ENDPOINTS = (
     "firmware_status", "system_information", "system_resources",
     "system_disk", "system_time", "cpu_type", "traffic_wan", "services",

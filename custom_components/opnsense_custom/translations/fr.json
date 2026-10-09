@@ -76,14 +76,16 @@
           "live_publish": "Mise à jour du temps réel",
           "fast_interval": "Rafraîchissement rapide",
           "scan_interval": "Rafraîchissement lent",
-          "wan_interface": "Interface WAN"
+          "wan_interface": "WAN principal",
+          "wan_exclude": "WAN à ignorer"
         },
         "data_description": {
           "realtime": "Débit WAN et CPU % poussés en continu par OPNsense (aucun droit API supplémentaire).",
           "live_publish": "Fréquence à laquelle Home Assistant affiche les valeurs temps réel. Plus court = plus vivant, plus d'écritures en base.",
           "fast_interval": "État du WAN, IP publiques, latence, pertes, tunnels VPN, températures.",
           "scan_interval": "Firmware, système, disque, RAM, services, top destinations.",
-          "wan_interface": "L'auto-détection convient presque toujours."
+          "wan_interface": "Auto = le WAN qui porte la route par défaut (suit les bascules). Sert à l'IP publique et aux top destinations.",
+          "wan_exclude": "Liens détectés par leur passerelle montante. Un lien ignoré n'a plus d'entités ni d'alertes."
         }
       },
       "dashboard": {
@@ -138,7 +140,7 @@
     },
     "alerts": {
       "options": {
-        "wan": "WAN coupé / rétabli (avec durée)",
+        "wan": "WAN coupé / rétabli, bascule multi-WAN (avec durée)",
         "latency": "Latence WAN élevée",
         "firmware": "Mise à jour firmware disponible",
         "services": "Service arrêté / relancé",
@@ -184,11 +186,17 @@
       "wan_latency": { "name": "Latence WAN" },
       "wan_packet_loss": { "name": "Pertes de paquets WAN" },
       "services_stopped": { "name": "Services arrêtés" },
-      "vpn_tunnels_up": { "name": "Tunnels VPN actifs" }
+      "vpn_tunnels_up": { "name": "Tunnels VPN actifs" },
+      "link_latency": { "name": "Latence {wan}" },
+      "link_packet_loss": { "name": "Pertes de paquets {wan}" },
+      "link_throughput_in": { "name": "Débit {wan} entrant" },
+      "link_throughput_out": { "name": "Débit {wan} sortant" },
+      "gateway_group": { "name": "Groupe {group}" }
     },
     "binary_sensor": {
       "update_available": { "name": "Mise à jour disponible" },
-      "wan_connected": { "name": "WAN connecté" }
+      "wan_connected": { "name": "WAN connecté" },
+      "link_connected": { "name": "{wan} connecté" }
     },
     "button": {
       "check_updates": { "name": "Vérifier les mises à jour" }

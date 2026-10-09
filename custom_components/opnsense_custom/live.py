@@ -57,7 +57,9 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         publish_interval: int,
         wan_identifier: Any,
     ) -> None:
-        """`wan_identifier` : callable renvoyant l'identifiant de config du WAN."""
+        """`wan_identifier` : callable renvoyant le ou les identifiants de
+        config des liens WAN ("wan", ["wan", "opt2"]...) ; le débit publié
+        sous "wan" est leur somme, chaque lien est aussi publié sous "wans"."""
         super().__init__(
             hass, _LOGGER, name=f"{DOMAIN}_{entry.entry_id}_live",
             update_interval=None,
@@ -67,8 +69,7 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._wan_identifier = wan_identifier
         self._tasks: list[asyncio.Task] = []
         # Cumul depuis la dernière publication
-        self._acc_rx = 0
-        self._acc_tx = 0
+        self._acc: dict[str, list[int]] = {}
         self._acc_time = 0.0
         self._prev_time: float | None = None
         self._cpu: dict[str, Any] | None = None
@@ -111,7 +112,8 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         max_age = max(3 * self.publish_interval, 10)
         now = monotonic()
         fresh: dict[str, Any] = {}
-        for key, stream in (("wan", "traffic"), ("cpu", "cpu")):
+        for key, stream in (("wan", "traffic"), ("wans", "traffic"),
+                            ("cpu", "cpu")):
             last = self.status[stream]["last"]
             if last is not None and now - last <= max_age and key in self.data:
                 fresh[key] = self.data[key]
@@ -178,15 +180,28 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not isinstance(stamp, int | float) or prev is None:
             return  # premier événement : durée inconnue
         elapsed = stamp - prev
-        iface = (event.get("interfaces") or {}).get(self._wan_identifier())
-        if elapsed <= 0 or elapsed > 30 or not isinstance(iface, dict):
+        if elapsed <= 0 or elapsed > 30:
             return
-        try:
-            self._acc_rx += max(int(iface.get("inbytes", 0)), 0)
-            self._acc_tx += max(int(iface.get("outbytes", 0)), 0)
-        except (TypeError, ValueError):
-            return
-        self._acc_time += elapsed
+        wanted = self._wan_identifier()
+        if isinstance(wanted, str):
+            wanted = [wanted]
+        interfaces = event.get("interfaces") or {}
+        counted = False
+        for ident in wanted:
+            iface = interfaces.get(ident)
+            if not isinstance(iface, dict):
+                continue
+            try:
+                rx = max(int(iface.get("inbytes", 0)), 0)
+                tx = max(int(iface.get("outbytes", 0)), 0)
+            except (TypeError, ValueError):
+                continue
+            acc = self._acc.setdefault(ident, [0, 0])
+            acc[0] += rx
+            acc[1] += tx
+            counted = True
+        if counted:
+            self._acc_time += elapsed
 
     def _on_cpu(self, event: dict[str, Any]) -> None:
         """Mémorise la dernière mesure CPU (en %)."""
@@ -200,11 +215,19 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_publish = monotonic()
         data = dict(self.data or {})
         if self._acc_time > 0:
-            data["wan"] = {
-                "in_bps": int(self._acc_rx * 8 / self._acc_time),
-                "out_bps": int(self._acc_tx * 8 / self._acc_time),
+            per_link = {
+                ident: {
+                    "in_bps": int(rx * 8 / self._acc_time),
+                    "out_bps": int(tx * 8 / self._acc_time),
+                }
+                for ident, (rx, tx) in self._acc.items()
             }
-            self._acc_rx = self._acc_tx = 0
+            data["wans"] = per_link
+            data["wan"] = {
+                "in_bps": sum(r["in_bps"] for r in per_link.values()),
+                "out_bps": sum(r["out_bps"] for r in per_link.values()),
+            }
+            self._acc = {}
             self._acc_time = 0.0
         if self._cpu is not None:
             data["cpu"] = self._cpu

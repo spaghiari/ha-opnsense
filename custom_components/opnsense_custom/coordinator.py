@@ -26,6 +26,7 @@ from .const import (
     SLOW_ENDPOINTS,
     WAN_AUTO,
 )
+from .wans import default_link, gateway_groups, wan_links
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,9 +122,8 @@ def build_device_info(entry: ConfigEntry, data: dict | None) -> DeviceInfo:
     )
 
 
-def _wan_counters(data: dict) -> tuple[int, int] | None:
-    """Compteurs d'octets (reçus, émis) de l'interface WAN résolue."""
-    device = data.get("_wan_device")
+def wan_counters(data: dict, device: str | None) -> tuple[int, int] | None:
+    """Compteurs d'octets (reçus, émis) d'une interface (device, ex: igc0)."""
     interfaces = (data.get("traffic_totals") or {}).get("interfaces")
     if not device or not isinstance(interfaces, dict):
         return None
@@ -140,9 +140,11 @@ def _wan_counters(data: dict) -> tuple[int, int] | None:
 class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Polling rapide : interfaces, passerelles et compteurs WAN.
 
-    Résout l'interface WAN (device + identifiant de config) et calcule un
-    débit moyen exact à partir des compteurs d'octets (différence / temps),
-    utilisé quand le flux temps réel n'est pas disponible.
+    Résout les liens WAN (passerelles montantes, cf. wans.py) et le WAN
+    principal (device + identifiant de config : route par défaut active, ou
+    choix de l'utilisateur), puis calcule par lien un débit moyen exact à
+    partir des compteurs d'octets (différence / temps), utilisé quand le flux
+    temps réel n'est pas disponible. Le débit global = somme des liens.
     """
 
     def __init__(
@@ -152,6 +154,7 @@ class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         interval: int,
         entry: ConfigEntry,
         wan_interface: str = WAN_AUTO,
+        wan_exclude: list[str] | None = None,
     ) -> None:
         """Initialise le coordinator rapide."""
         super().__init__(
@@ -163,8 +166,11 @@ class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.client = client
         self.entry = entry
         self.wan_interface = wan_interface
+        self.wan_exclude = list(wan_exclude or [])
         self.wan_identifier = DEFAULT_WAN_IDENTIFIER
-        self._prev_counters: tuple[float, int, int] | None = None
+        # Identifiants de config des liens WAN (flux temps réel : somme).
+        self.wan_identifiers: list[str] = [DEFAULT_WAN_IDENTIFIER]
+        self._prev_counters: dict[str, tuple[float, int, int]] = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Appelé toutes les `fast_interval` secondes."""
@@ -183,27 +189,50 @@ class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         rows = (data.get("interfaces") or {}).get("rows")
         data["_wan_device"] = resolve_wan_device(rows, self.wan_interface)
+        links = wan_links(data, self.wan_exclude)
+        if self.wan_interface in (None, "", WAN_AUTO) and data.get("gateways"):
+            # Multi-WAN : le WAN principal suit la route par défaut active
+            # (bascule comprise) ; IP publique et top destinations le suivent.
+            main = default_link(links)
+            if main and main.get("device"):
+                data["_wan_device"] = main["device"]
+        data["_wans"] = links
+        data["_wan_groups"] = gateway_groups(data)
+
         identifier = (find_wan_row(data) or {}).get("identifier")
         if identifier:
             self.wan_identifier = identifier
         data["_wan_identifier"] = self.wan_identifier
+        ids = [link["id"] for link in links if link.get("id")]
+        self.wan_identifiers = ids or [self.wan_identifier]
 
         # Débit moyen depuis le cycle précédent, à partir des compteurs.
-        data["_wan_rate"] = None
-        counters = _wan_counters(data)
         now = monotonic()
-        if counters is not None:
-            if self._prev_counters is not None:
-                t0, rx0, tx0 = self._prev_counters
+        rates: dict[str, dict[str, int]] = {}
+        seen: dict[str, tuple[float, int, int]] = {}
+        for link in links or [{"id": self.wan_identifier,
+                               "device": data["_wan_device"]}]:
+            counters = wan_counters(data, link.get("device"))
+            if counters is None:
+                continue
+            prev = self._prev_counters.get(link["id"])
+            if prev is not None:
+                t0, rx0, tx0 = prev
                 elapsed = now - t0
                 drx, dtx = counters[0] - rx0, counters[1] - tx0
                 # Compteurs remis à zéro (reboot) : on saute ce cycle.
                 if elapsed > 0 and drx >= 0 and dtx >= 0:
-                    data["_wan_rate"] = {
+                    rates[link["id"]] = {
                         "in_bps": int(drx * 8 / elapsed),
                         "out_bps": int(dtx * 8 / elapsed),
                     }
-            self._prev_counters = (now, counters[0], counters[1])
+            seen[link["id"]] = (now, counters[0], counters[1])
+        self._prev_counters = seen
+        data["_wan_rates"] = rates
+        data["_wan_rate"] = {
+            "in_bps": sum(r["in_bps"] for r in rates.values()),
+            "out_bps": sum(r["out_bps"] for r in rates.values()),
+        } if rates else None
         return data
 
 

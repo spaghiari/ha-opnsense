@@ -2,8 +2,10 @@
 
 Évalue l'état du pare-feu à chaque rafraîchissement du coordinator et envoie
 des notifications (persistante HA + services notify choisis) sur les
-transitions : WAN coupé / rétabli, latence élevée, mise à jour firmware,
-service arrêté, tunnel VPN coupé / rétabli, disque presque plein.
+transitions : WAN coupé / rétabli (par lien en multi-WAN, et « internet
+coupé » quand tous les liens sont tombés), bascule d'un groupe de
+passerelles, latence élevée, mise à jour firmware, service arrêté, tunnel
+VPN coupé / rétabli, disque presque plein, température.
 
 Principes :
   * Basé sur les données du coordinator, pas sur les entity_id -> insensible
@@ -59,6 +61,7 @@ from .sensor import (
     _tunnels,
     _wan_latency,
 )
+from .wans import default_link
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,6 +79,34 @@ def _fmt_duration(seconds: float) -> str:
 
 def _hhmm(moment: datetime) -> str:
     return dt_util.as_local(moment).strftime("%H:%M")
+
+
+class _Outage:
+    """Suivi d'une coupure : début, alerte envoyée après le délai de grâce."""
+
+    def __init__(self) -> None:
+        self.since: datetime | None = None
+        self.alerted = False
+        # Coupure qui vient de se terminer (pour le message « rétabli »).
+        self.last_since: datetime | None = None
+        self.last_elapsed = 0.0
+
+    def update(self, up: bool, now: datetime, delay: float) -> str | None:
+        """Renvoie "down" / "up" quand il faut notifier, sinon None."""
+        if not up:
+            if self.since is None:
+                self.since = now
+            if not self.alerted and (now - self.since).total_seconds() >= delay:
+                self.alerted = True
+                return "down"
+            return None
+        if self.since is None:
+            return None
+        self.last_since = self.since
+        self.last_elapsed = (now - self.since).total_seconds()
+        notify = self.alerted or self.last_elapsed >= delay
+        self.since, self.alerted = None, False
+        return "up" if notify else None
 
 
 class OPNsenseAlerts:
@@ -111,8 +142,10 @@ class OPNsenseAlerts:
         )
         # État interne
         self._baseline_done = False
-        self._wan_down_since: datetime | None = None
-        self._wan_alerted = False
+        self._internet = _Outage()
+        self._links: dict[str, _Outage] = {}
+        self._groups_active: dict[str, tuple[str, ...]] = {}
+        self._default_link: str | None = None
         self._latency_high_since: datetime | None = None
         self._latency_alerted = False
         self._update_available: bool | None = None
@@ -145,7 +178,15 @@ class OPNsenseAlerts:
         """Mémorise l'état initial sans notifier."""
         self._baseline_done = True
         if _wan_up(data) is False:
-            self._wan_down_since = now
+            self._internet.since = now
+        for link in data.get("_wans") or []:
+            outage = self._links.setdefault(link["id"], _Outage())
+            if link["online"] is False:
+                outage.since = now
+        self._groups_active = {
+            g["name"]: tuple(g["active"]) for g in data.get("_wan_groups") or []
+        }
+        self._default_link = (default_link(data.get("_wans") or []) or {}).get("id")
         self._update_available = _has_update_available(data)
         self._stopped_services = set(
             _services_attributes(data).get("stopped") or []
@@ -163,33 +204,9 @@ class OPNsenseAlerts:
         out: list[tuple[str, str, str]] = []
         name = self._firewall_name(data)
 
-        # ---- WAN coupé / rétabli ----
-        wan = _wan_up(data)
-        if ALERT_WAN in self.enabled and wan is not None:
-            if not wan:
-                if self._wan_down_since is None:
-                    self._wan_down_since = now
-                elapsed = (now - self._wan_down_since).total_seconds()
-                if not self._wan_alerted and elapsed >= self.wan_delay:
-                    self._wan_alerted = True
-                    out.append((
-                        f"🔴 {name} : WAN coupé",
-                        "La connexion internet est coupée depuis "
-                        f"{_hhmm(self._wan_down_since)}.",
-                        "wan",
-                    ))
-            elif self._wan_down_since is not None:
-                elapsed = (now - self._wan_down_since).total_seconds()
-                if self._wan_alerted or elapsed >= self.wan_delay:
-                    out.append((
-                        f"🟢 {name} : WAN rétabli",
-                        f"Internet est revenu à {_hhmm(now)} après "
-                        f"{_fmt_duration(elapsed)} de coupure (depuis "
-                        f"{_hhmm(self._wan_down_since)}).",
-                        "wan",
-                    ))
-                self._wan_down_since = None
-                self._wan_alerted = False
+        # ---- WAN coupé / rétabli, bascules ----
+        if ALERT_WAN in self.enabled:
+            out += self._evaluate_wan(data, now, name)
 
         # ---- Latence élevée ----
         latency = _wan_latency(data)
@@ -298,6 +315,113 @@ class OPNsenseAlerts:
                     "temperature",
                 ))
 
+        return out
+
+    def _evaluate_wan(
+        self, data: dict, now: datetime, name: str
+    ) -> list[tuple[str, str, str]]:
+        """Internet (tous liens), chaque lien en multi-WAN, bascules.
+
+        Quand tous les liens tombent (ou reviennent) dans le même cycle, un
+        seul message « Internet coupé / rétabli » remplace ceux des liens.
+        """
+        links = data.get("_wans") or []
+        multi = len(links) >= 2
+
+        # Lien par lien (multi-WAN uniquement : avec un seul WAN, l'alerte
+        # « internet » ci-dessous dit déjà tout).
+        link_events: list[tuple[str, dict, _Outage]] = []
+        for link in links if multi else []:
+            if link["online"] is None:
+                continue
+            outage = self._links.setdefault(link["id"], _Outage())
+            event = outage.update(link["online"], now, self.wan_delay)
+            if event:
+                link_events.append((event, link, outage))
+
+        # Internet : au moins un lien en ligne.
+        internet: list[tuple[str, str, str]] = []
+        internet_event = None
+        wan = _wan_up(data)
+        if wan is not None:
+            internet_event = self._internet.update(wan, now, self.wan_delay)
+        online = [x["name"] for x in links if x["online"]]
+        offline = [x["name"] for x in links if x["online"] is False]
+        if internet_event == "down":
+            internet.append((
+                f"🔴 {name} : {'Internet' if multi else 'WAN'} coupé",
+                ("Tous les liens WAN sont hors ligne depuis "
+                 if multi else "La connexion internet est coupée depuis ")
+                + f"{_hhmm(self._internet.since)}.",
+                "wan",
+            ))
+        elif internet_event == "up":
+            via = f" par {', '.join(online)}" if multi and online else ""
+            still = (f" {', '.join(offline)} toujours hors ligne."
+                     if multi and offline else "")
+            internet.append((
+                f"🟢 {name} : {'Internet' if multi else 'WAN'} rétabli",
+                f"Internet est revenu{via} à {_hhmm(now)} après "
+                f"{_fmt_duration(self._internet.last_elapsed)} de coupure "
+                f"(depuis {_hhmm(self._internet.last_since)}).{still}",
+                "wan",
+            ))
+
+        out: list[tuple[str, str, str]] = []
+        for event, link, outage in link_events:
+            if internet_event == event:
+                continue  # couvert par « Internet coupé / rétabli »
+            if event == "down":
+                relay = (f" Internet passe par {', '.join(online)}."
+                         if online else "")
+                detail = f" ({link['status']})" if link.get("status") else ""
+                out.append((
+                    f"🔴 {name} : {link['name']} coupé",
+                    f"Le lien {link['name']} est hors ligne depuis "
+                    f"{_hhmm(outage.since)}{detail}.{relay}",
+                    f"wan-{link['id']}",
+                ))
+            else:
+                out.append((
+                    f"🟢 {name} : {link['name']} rétabli",
+                    f"Le lien {link['name']} est revenu à {_hhmm(now)} après "
+                    f"{_fmt_duration(outage.last_elapsed)} de coupure.",
+                    f"wan-{link['id']}",
+                ))
+        out += internet
+
+        # Bascules : groupes de passerelles s'il y en a, sinon route par
+        # défaut. Une reprise après coupure totale n'est pas une bascule.
+        groups = data.get("_wan_groups")
+        if groups:
+            for group in groups:
+                active = tuple(group["active"])
+                before = self._groups_active.get(group["name"])
+                self._groups_active[group["name"]] = active
+                if not before or not active or before == active:
+                    continue
+                out.append((
+                    f"🔀 {name} : bascule {group['name']}",
+                    f"Le groupe {group['name']} passe par {' + '.join(active)}"
+                    f" (avant : {' + '.join(before)}).",
+                    f"failover-{group['name']}",
+                ))
+        elif multi:
+            main = default_link(links)
+            current = main["id"] if main and main["online"] else None
+            before = self._default_link
+            if current:
+                self._default_link = current
+            if before and current and before != current:
+                previous = next(
+                    (x["name"] for x in links if x["id"] == before), before
+                )
+                out.append((
+                    f"🔀 {name} : bascule sur {main['name']}",
+                    f"La route par défaut passe par {main['name']} "
+                    f"(avant : {previous}).",
+                    "failover",
+                ))
         return out
 
     def _firewall_name(self, data: dict) -> str:

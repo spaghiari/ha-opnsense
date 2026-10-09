@@ -31,6 +31,8 @@ async def async_get_config_entry_diagnostics(
         },
         "resolved_wan_device": (coordinator.fast.data or {}).get("_wan_device"),
         "wan_identifier": coordinator.fast.wan_identifier,
+        "wan_links": (coordinator.fast.data or {}).get("_wans"),
+        "gateway_groups": (coordinator.fast.data or {}).get("_wan_groups"),
         "refresh": {
             "slow_interval_s": coordinator.update_interval.total_seconds(),
             "fast_interval_s": coordinator.fast.update_interval.total_seconds(),

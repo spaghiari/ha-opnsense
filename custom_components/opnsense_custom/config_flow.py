@@ -52,6 +52,7 @@ from .const import (
     CONF_TEMP_THRESHOLD,
     CONF_VERIFY_SSL,
     CONF_WAN_DOWN_DELAY,
+    CONF_WAN_EXCLUDE,
     CONF_WAN_INTERFACE,
     DASHBOARD_THEMES,
     DEFAULT_ALERTS,
@@ -78,6 +79,7 @@ from .const import (
     WAN_AUTO,
 )
 from .coordinator import resolve_wan_device
+from .wans import wan_links
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -350,10 +352,35 @@ class OPNsenseOptionsFlow(OptionsFlow):
 
         opts = self._entry.options
         rows = None
+        links: list[dict] = []
         coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
         if coordinator is not None and coordinator.data:
             # Les interfaces sont lues par le polling rapide (vue fusionnée).
-            rows = (coordinator.merged.get("interfaces") or {}).get("rows")
+            merged = coordinator.merged
+            rows = (merged.get("interfaces") or {}).get("rows")
+            # Tous les liens WAN, y compris ceux exclus aujourd'hui.
+            if merged.get("gateways"):
+                links = wan_links(merged)
+
+        fields: dict[Any, Any] = {}
+        if len(links) >= 2:
+            # Multi-WAN : liens à ignorer (ex. une 4G de secours qu'on ne
+            # veut pas voir « coupée » à chaque mise en veille).
+            fields[vol.Optional(
+                CONF_WAN_EXCLUDE, default=opts.get(CONF_WAN_EXCLUDE, [])
+            )] = SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(
+                            value=link["id"],
+                            label=f"{link['name']} ({link['device'] or link['id']})",
+                        )
+                        for link in links
+                    ],
+                    multiple=True,
+                    mode=SelectSelectorMode.LIST,
+                )
+            )
 
         schema = vol.Schema(
             {
@@ -381,6 +408,7 @@ class OPNsenseOptionsFlow(OptionsFlow):
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                **fields,
             }
         )
         return self.async_show_form(step_id="refresh", data_schema=schema)

@@ -37,6 +37,14 @@ A custom Home Assistant integration that exposes your **OPNsense firewall** as a
 - **VPN tunnels** (WireGuard / IPsec / OpenVPN) up count with per-tunnel details - no extra privilege needed
 - The WAN no longer has to be named `wan` in OPNsense for real-time throughput / top destinations
 
+### Multi-WAN and gateway groups *(v2.3)*
+- **One WAN = one upstream gateway** (OPNsense's *Upstream Gateway* checkbox): VPN gateways are never mistaken for a WAN, and the IPv4 / IPv6 gateways of one interface form a single link
+- **ISP outages detected**: a link is down when its interface is down **or** its gateway is offline / at 100 % packet loss (before v2.3 only the interface state counted)
+- **WAN connected** = at least one link online; latency and loss follow the link carrying the default route; throughput and volumes = sum of all links
+- **With two or more WANs**: one set of entities per link (*\<link\> connected*, latency, loss, throughput in / out), created automatically
+- **Gateway groups**: one sensor per group whose state is the gateway carrying the traffic, with members per tier as attributes (recent OPNsense, optional privilege)
+- **WANs to ignore**: in the options, to leave a link out (e.g. a backup LTE)
+
 ### Firmware management
 - **Native `update` entity** - compare installed vs latest version, one-click install
 - **"Check for updates" button** to force a check on demand
@@ -72,7 +80,8 @@ Go to **System → Access → Groups → +** and create a group with these **8 p
 | `System: Firmware` | Firmware version + updates |
 | `System: Status` | System information endpoint |
 | `Reporting: Traffic` | WAN throughput sensors |
-| `Status: Gateways` *(optional)* | WAN latency & packet loss |
+| `System: Gateways` *(optional, `Status: Gateways` on older versions)* | WAN links, ISP outages, latency & packet loss |
+| `System: Gateway Groups` *(optional)* | Gateway group sensors and failover alerts |
 | `Status: Services` *(optional)* | Stopped services sensor |
 
 > ⚠️ **Do NOT grant "All pages"** - that would defeat the purpose of a restricted user.
@@ -223,7 +232,7 @@ your phone(s). No automation to write.
 
 | Alert | Sent when |
 |---|---|
-| WAN down / restored | WAN down for longer than the delay (1 min by default); the "restored" message includes the outage duration |
+| WAN down / restored | WAN down for longer than the delay (1 min by default); the "restored" message includes the outage duration. Multi-WAN: one message per link, "Internet down" when every link is down, and a message on each gateway group (or default route) failover |
 | High latency | Latency above the threshold (100 ms) for a duration (5 min), then back to normal |
 | Firmware update | A new OPNsense version becomes available |
 | Service stopped / restarted | A service stops (services already stopped at startup are ignored) |

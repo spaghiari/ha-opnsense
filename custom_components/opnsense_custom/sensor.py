@@ -26,7 +26,19 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .coordinator import OPNsenseDataCoordinator, build_device_info, find_wan_row
+from .coordinator import (
+    OPNsenseDataCoordinator,
+    build_device_info,
+    find_wan_row,
+    wan_counters,
+)
+from .wans import (
+    default_link,
+    find_group,
+    find_link,
+    leading_float,
+    links_with_entities,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -367,41 +379,31 @@ def _top_sum_out_bps(data: dict) -> int | None:
     return total if found else None
 
 
-def _traffic_total_received(data: dict) -> int | None:
-    """Total octets reçus sur le WAN depuis le dernier reset des compteurs."""
+def _wan_devices(data: dict) -> list[str]:
+    """Devices des liens WAN (à défaut : l'interface WAN résolue)."""
+    devices = [link["device"] for link in data.get("_wans") or []
+               if link.get("device")]
+    if devices:
+        return devices
     device = _wan_device_name(data)
-    if not device:
-        return None
-    interfaces = _get(data, "traffic_totals", "interfaces")
-    if not isinstance(interfaces, dict):
-        return None
-    for iface_data in interfaces.values():
-        if isinstance(iface_data, dict) and iface_data.get("device") == device:
-            # Attention : la clé contient un ESPACE, format OPNsense
-            val = iface_data.get("bytes received")
-            try:
-                return int(val) if val is not None else None
-            except (TypeError, ValueError):
-                return None
-    return None
+    return [device] if device else []
+
+
+def _traffic_total(data: dict, index: int) -> int | None:
+    """Total d'octets (0 = reçus, 1 = émis) cumulé sur tous les liens WAN."""
+    values = [wan_counters(data, device) for device in _wan_devices(data)]
+    values = [v for v in values if v is not None]
+    return sum(v[index] for v in values) if values else None
+
+
+def _traffic_total_received(data: dict) -> int | None:
+    """Total octets reçus sur le(s) WAN depuis le dernier reset des compteurs."""
+    return _traffic_total(data, 0)
 
 
 def _traffic_total_transmitted(data: dict) -> int | None:
-    """Total octets transmis sur le WAN depuis le dernier reset des compteurs."""
-    device = _wan_device_name(data)
-    if not device:
-        return None
-    interfaces = _get(data, "traffic_totals", "interfaces")
-    if not isinstance(interfaces, dict):
-        return None
-    for iface_data in interfaces.values():
-        if isinstance(iface_data, dict) and iface_data.get("device") == device:
-            val = iface_data.get("bytes transmitted")
-            try:
-                return int(val) if val is not None else None
-            except (TypeError, ValueError):
-                return None
-    return None
+    """Total octets transmis sur le(s) WAN depuis le dernier reset des compteurs."""
+    return _traffic_total(data, 1)
 
 
 # ----- Top destinations WAN -----
@@ -490,17 +492,7 @@ def _top_dest_out_name(data: dict) -> str | None:
 # Les valeurs numériques sont des chaînes avec unité, "~" si non mesuré.
 
 
-def _leading_float(raw: Any) -> float | None:
-    """Extrait le nombre en tête d'une chaîne type "3.2 ms" / "0.0 %"."""
-    if isinstance(raw, int | float):
-        return float(raw)
-    if not isinstance(raw, str):
-        return None
-    token = raw.strip().split(" ")[0]
-    try:
-        return float(token)
-    except ValueError:
-        return None
+_leading_float = leading_float
 
 
 def _gateways(data: dict) -> list[dict] | None:
@@ -547,14 +539,37 @@ def _wan_gateway(data: dict) -> dict | None:
     return None
 
 
+def _main_link(data: dict) -> dict | None:
+    """Lien WAN qui porte la route par défaut (multi-WAN), sinon None."""
+    return default_link(data.get("_wans") or [])
+
+
 def _wan_latency(data: dict) -> float | None:
+    """Latence du WAN qui porte la route par défaut."""
+    link = _main_link(data)
+    if link and link.get("delay_ms") is not None:
+        return link["delay_ms"]
     gw = _wan_gateway(data)
     return gw.get("delay_ms") if gw else None
 
 
 def _wan_packet_loss(data: dict) -> float | None:
+    link = _main_link(data)
+    if link and link.get("loss_pct") is not None:
+        return link["loss_pct"]
     gw = _wan_gateway(data)
     return gw.get("loss_pct") if gw else None
+
+
+def _wans_attribute(data: dict) -> list[dict]:
+    """Résumé des liens WAN pour les attributs (dashboard, automatisations)."""
+    return [
+        {key: link.get(key) for key in (
+            "id", "name", "device", "gateway", "online", "status", "default",
+            "delay_ms", "loss_pct",
+        )}
+        for link in data.get("_wans") or []
+    ]
 
 
 # ----- Services -----
@@ -1087,7 +1102,9 @@ ATTRIBUTE_EXTRACTORS = {
     "wan_top_dest_in": lambda data: {"top_5": _top_destinations(data, "in") or []},
     "wan_top_dest_out": lambda data: {"top_5": _top_destinations(data, "out") or []},
     "wan_latency": lambda data: {
-        "gateway": (_wan_gateway(data) or {}).get("name"),
+        "gateway": (_main_link(data) or {}).get("gateway")
+        or (_wan_gateway(data) or {}).get("name"),
+        "wans": _wans_attribute(data),
         "gateways": _gateways(data) or [],
     },
     "services_stopped": _services_attributes,
@@ -1113,6 +1130,32 @@ async def async_setup_entry(
         for description, value_fn in SENSOR_DESCRIPTIONS
     ]
     async_add_entities(entities)
+
+    # Multi-WAN : capteurs par lien et par groupe de passerelles, créés au
+    # démarrage puis dès qu'un nouveau lien / groupe apparaît.
+    known: set[str] = set()
+
+    def _sync_dynamic() -> None:
+        data = hub.fast.data or {}
+        new: list[SensorEntity] = []
+        for link in links_with_entities(data):
+            if f"link:{link['id']}" in known:
+                continue
+            known.add(f"link:{link['id']}")
+            new += [
+                OPNsenseLinkSensor(hub, entry, link, description, value_fn)
+                for description, value_fn in LINK_SENSOR_DESCRIPTIONS
+            ]
+        for group in data.get("_wan_groups") or []:
+            if not group.get("name") or f"group:{group['name']}" in known:
+                continue
+            known.add(f"group:{group['name']}")
+            new.append(OPNsenseGatewayGroupSensor(hub, entry, group["name"]))
+        if new:
+            async_add_entities(new)
+
+    _sync_dynamic()
+    entry.async_on_unload(hub.fast.async_add_listener(_sync_dynamic))
 
 
 # Rythme de rafraîchissement de chaque capteur (les autres : polling lent).
@@ -1145,9 +1188,10 @@ class OPNsenseSensor(CoordinatorEntity, SensorEntity):
         entry: ConfigEntry,
         description: SensorEntityDescription,
         value_fn: Callable[[dict], Any],
+        coordinators: list | None = None,
     ) -> None:
         """Initialise le sensor."""
-        coordinators = tier_coordinators(hub, description.key)
+        coordinators = coordinators or tier_coordinators(hub, description.key)
         super().__init__(coordinators[0])
         self._hub = hub
         self._extra_coordinators = coordinators[1:]
@@ -1192,3 +1236,156 @@ class OPNsenseSensor(CoordinatorEntity, SensorEntity):
             return extractor(self._hub.merged)
         except Exception:  # noqa: BLE001
             return None
+
+
+# ============================================================
+#  Multi-WAN : un jeu de capteurs par lien, un capteur par groupe
+# ============================================================
+
+
+def _link_rate(data: dict, link_id: str, direction: str) -> int | None:
+    """Débit d'un lien : flux temps réel, sinon compteurs du polling rapide."""
+    key = f"{direction}_bps"
+    for source in ((data.get("_live") or {}).get("wans") or {},
+                   data.get("_wan_rates") or {}):
+        rate = source.get(link_id)
+        if isinstance(rate, dict) and rate.get(key) is not None:
+            return rate[key]
+    return None
+
+
+def _link_field(field: str) -> Callable[[dict, str], Any]:
+    """value_fn lisant un champ du lien (latence, pertes...)."""
+    def value(data: dict, link_id: str) -> Any:
+        return (find_link(data, link_id) or {}).get(field)
+    return value
+
+
+_RATE = {
+    "device_class": SensorDeviceClass.DATA_RATE,
+    "native_unit_of_measurement": UnitOfDataRate.BITS_PER_SECOND,
+    "suggested_unit_of_measurement": UnitOfDataRate.MEGABITS_PER_SECOND,
+    "suggested_display_precision": 2,
+    "state_class": SensorStateClass.MEASUREMENT,
+}
+
+LINK_SENSOR_DESCRIPTIONS: tuple[
+    tuple[SensorEntityDescription, Callable[[dict, str], Any]], ...
+] = (
+    (
+        SensorEntityDescription(
+            key="latency",
+            translation_key="link_latency",
+            icon="mdi:timer-outline",
+            device_class=SensorDeviceClass.DURATION,
+            native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+            suggested_display_precision=1,
+            state_class=SensorStateClass.MEASUREMENT,
+        ),
+        _link_field("delay_ms"),
+    ),
+    (
+        SensorEntityDescription(
+            key="packet_loss",
+            translation_key="link_packet_loss",
+            icon="mdi:package-variant-remove",
+            native_unit_of_measurement=PERCENTAGE,
+            suggested_display_precision=1,
+            state_class=SensorStateClass.MEASUREMENT,
+        ),
+        _link_field("loss_pct"),
+    ),
+    (
+        SensorEntityDescription(
+            key="throughput_in", translation_key="link_throughput_in",
+            icon="mdi:download-network", **_RATE,
+        ),
+        lambda data, link_id: _link_rate(data, link_id, "in"),
+    ),
+    (
+        SensorEntityDescription(
+            key="throughput_out", translation_key="link_throughput_out",
+            icon="mdi:upload-network", **_RATE,
+        ),
+        lambda data, link_id: _link_rate(data, link_id, "out"),
+    ),
+)
+
+
+class OPNsenseLinkSensor(OPNsenseSensor):
+    """Capteur d'un lien WAN donné (latence, pertes, débits)."""
+
+    def __init__(
+        self,
+        hub: OPNsenseDataCoordinator,
+        entry: ConfigEntry,
+        link: dict,
+        description: SensorEntityDescription,
+        value_fn: Callable[[dict, str], Any],
+    ) -> None:
+        """Initialise ; `link` = le lien tel qu'il était à la création."""
+        link_id = link["id"]
+        self._link_id = link_id
+        rate = description.key.startswith("throughput")
+        super().__init__(
+            hub, entry, description,
+            lambda data: value_fn(data, link_id),
+            coordinators=(
+                [c for c in (hub.live, hub.fast) if c is not None]
+                if rate else [hub.fast]
+            ),
+        )
+        self._attr_unique_id = f"{entry.entry_id}_wan_{link_id}_{description.key}"
+        self._attr_translation_placeholders = {"wan": link["name"]}
+
+    @property
+    def available(self) -> bool:
+        """Indisponible si le lien a disparu (passerelle supprimée, exclue)."""
+        return super().available and find_link(
+            self._hub.merged, self._link_id
+        ) is not None
+
+
+class OPNsenseGatewayGroupSensor(OPNsenseSensor):
+    """Groupe de passerelles : état = passerelle(s) qui portent le trafic."""
+
+    def __init__(
+        self, hub: OPNsenseDataCoordinator, entry: ConfigEntry, name: str
+    ) -> None:
+        """Initialise."""
+        self._group = name
+        super().__init__(
+            hub, entry,
+            SensorEntityDescription(
+                key=f"gateway_group_{name}",
+                translation_key="gateway_group",
+                icon="mdi:router-network",
+            ),
+            self._state,
+            coordinators=[hub.fast],
+        )
+        self._attr_translation_placeholders = {"group": name}
+
+    def _state(self, data: dict) -> str | None:
+        group = find_group(data, self._group)
+        if group is None:
+            return None
+        return " + ".join(group["active"]) if group["active"] else "hors ligne"
+
+    @property
+    def available(self) -> bool:
+        """Indisponible si le groupe a été supprimé côté OPNsense."""
+        return super().available and find_group(
+            self._hub.merged, self._group
+        ) is not None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Membres par niveau de priorité, avec leur état."""
+        group = find_group(self._hub.merged, self._group)
+        if group is None:
+            return None
+        return {key: group[key] for key in (
+            "description", "trigger", "active", "members_usable",
+            "members_total", "tiers",
+        )}
