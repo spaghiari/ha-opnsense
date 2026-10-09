@@ -325,7 +325,8 @@ def _firmware_latest(data: dict) -> str | None:
 #
 # Deux endpoints sont utilisés :
 #  - traffic_wan = /api/diagnostics/traffic/top/wan
-#    → débit temps réel pré-calculé par OPNsense (rate_bits_in/out en bps)
+#    → débit temps réel pré-calculé par OPNsense (rate_bits_in/out en bps,
+#      vus depuis l'hôte distant : cf. _TOP_KEY)
 #  - traffic_totals = /api/diagnostics/traffic/interface
 #    → compteurs cumulés depuis le boot (bytes received/transmitted en octets)
 #
@@ -375,11 +376,18 @@ def _cpu_usage(data: dict) -> float | None:
     return None
 
 
+# traffic_top.py (OPNsense) agrège la sortie d'iftop par hôte DISTANT :
+# rate_bits_out = ce que cet hôte envoie (ligne "<=", donc notre
+# téléchargement), rate_bits_in = ce qu'il reçoit (notre envoi). On remet
+# ces champs dans le sens du pare-feu.
+_TOP_KEY = {"in": "rate_bits_out", "out": "rate_bits_in"}
+
+
 def _top_sum_in_bps(data: dict) -> int | None:
-    """Débit entrant WAN = somme des rate_bits_in des destinations (repli).
+    """Débit entrant WAN = somme des téléchargements par destination (repli).
 
     L'endpoint /traffic/top/wan renvoie les débits par destination dans
-    une liste 'records'. Le débit global = somme des rate_bits_in.
+    une liste 'records'. Le débit global = somme des débits reçus.
     """
     records = _get(data, "traffic_wan", "wan", "records")
     if not isinstance(records, list):
@@ -388,7 +396,7 @@ def _top_sum_in_bps(data: dict) -> int | None:
     found = False
     for rec in records:
         if isinstance(rec, dict):
-            val = rec.get("rate_bits_in")
+            val = rec.get(_TOP_KEY["in"])
             if val is not None:
                 try:
                     total += int(val)
@@ -399,7 +407,7 @@ def _top_sum_in_bps(data: dict) -> int | None:
 
 
 def _top_sum_out_bps(data: dict) -> int | None:
-    """Débit sortant WAN = somme des rate_bits_out des destinations (repli)."""
+    """Débit sortant WAN = somme des envois par destination (repli)."""
     records = _get(data, "traffic_wan", "wan", "records")
     if not isinstance(records, list):
         return None
@@ -407,7 +415,7 @@ def _top_sum_out_bps(data: dict) -> int | None:
     found = False
     for rec in records:
         if isinstance(rec, dict):
-            val = rec.get("rate_bits_out")
+            val = rec.get(_TOP_KEY["out"])
             if val is not None:
                 try:
                     total += int(val)
@@ -450,7 +458,7 @@ def _traffic_total_transmitted(data: dict) -> int | None:
 #   - state = nom de la #1 destination (reverse DNS ou IP fallback)
 #   - attribut "top_5" = liste des 5 plus gros consommateurs avec nom + débit
 #
-# Le tri se fait sur rate_bits_in (ou _out) pour respectivement le download
+# Le tri se fait sur le débit reçu (ou envoyé) pour respectivement le download
 # et l'upload. On retire les destinations "local" (LAN→WAN intra-réseau).
 
 TOP_N = 5
@@ -477,8 +485,8 @@ def _is_local_record(rec: dict) -> bool:
 def _top_destinations(data: dict, direction: str) -> list[dict] | None:
     """Top N destinations triées par débit dans la direction donnée.
 
-    direction = 'in'  -> rate_bits_in  (téléchargement)
-    direction = 'out' -> rate_bits_out (téléversement)
+    direction = 'in'  -> téléchargement (rate_bits_out, cf. _TOP_KEY)
+    direction = 'out' -> téléversement (rate_bits_in)
 
     Renvoie une liste de dicts {name, address, rate_bps, rate_mbps},
     triée du plus gros au plus petit, limitée à TOP_N entrées.
@@ -487,7 +495,7 @@ def _top_destinations(data: dict, direction: str) -> list[dict] | None:
     if not isinstance(records, list) or not records:
         return None
 
-    rate_key = "rate_bits_in" if direction == "in" else "rate_bits_out"
+    rate_key = _TOP_KEY[direction]
     candidates: list[dict] = []
     for rec in records:
         if not isinstance(rec, dict) or _is_local_record(rec):
