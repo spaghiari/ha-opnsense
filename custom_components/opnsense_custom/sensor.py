@@ -138,11 +138,41 @@ def _root_disk(data: dict) -> dict | None:
 
 
 def _root_disk_used_percent(data: dict) -> float | None:
+    """Occupation du disque système en %.
+
+    En ZFS, le dataset monté sur "/" ne compte que ses propres données (les
+    logs, /usr, /var... sont dans d'autres datasets du même pool) : son
+    pourcentage reste proche de 0 % sur un gros disque. On calcule donc le
+    taux du pool : somme des octets utilisés par ses datasets / (cette somme
+    + espace libre du pool). En UFS, le pourcentage de df est déjà le bon.
+    """
     dev = _root_disk(data)
-    if dev:
-        used_pct = dev.get("used_pct")
+    if not dev:
+        return None
+    if dev.get("type") == "zfs" and dev.get("available_bytes") is not None:
+        pool = str(dev.get("device") or "").split("/")[0]
+        devices = _get(data, "system_disk", "devices") or []
+        used = 0
+        for ds in devices:
+            if not isinstance(ds, dict) or ds.get("type") != "zfs":
+                continue
+            name = str(ds.get("device") or "")
+            if name == pool or name.startswith(pool + "/"):
+                try:
+                    used += int(ds.get("used_bytes") or 0)
+                except (TypeError, ValueError):
+                    continue
+        try:
+            total = used + int(dev["available_bytes"])
+        except (TypeError, ValueError):
+            total = 0
+        if total > 0:
+            return round(used / total * 100, 1)
+    used_pct = dev.get("used_pct")
+    try:
         return float(used_pct) if used_pct is not None else None
-    return None
+    except (TypeError, ValueError):
+        return None
 
 
 def _root_disk_blocks(data: dict) -> str | None:

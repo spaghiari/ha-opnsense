@@ -76,6 +76,31 @@ def gateway_health(state: dict | None) -> dict[str, Any]:
     }
 
 
+_TUNNEL_GROUPS = ("wireguard", "wg", "ipsec", "openvpn")
+_TUNNEL_PREFIXES = ("wg", "ipsec", "ovpn", "tun", "gif", "gre")
+
+
+def _is_tunnel(data: dict, identifier: str | None, device: str | None) -> bool:
+    """True si l'interface est un tunnel VPN (WireGuard, IPsec, OpenVPN...)."""
+    row = _row_for(data, identifier, device)
+    if any(group in (row.get("groups") or []) for group in _TUNNEL_GROUPS):
+        return True
+    name = str(device or row.get("device") or "")
+    return name.startswith(_TUNNEL_PREFIXES)
+
+
+def _group_members(data: dict) -> set[str]:
+    """Noms des passerelles membres d'au moins un groupe de passerelles."""
+    names: set[str] = set()
+    for row in _rows(data, "gateway_groups"):
+        tiers = row.get("gateways") or {}
+        for members in (tiers.values() if isinstance(tiers, dict) else tiers):
+            for member in members or []:
+                if isinstance(member, dict) and member.get("name"):
+                    names.add(member["name"])
+    return names
+
+
 def _interface_rows(data: dict) -> list[dict]:
     rows = (data.get("interfaces") or {}).get("rows")
     return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
@@ -102,12 +127,20 @@ def wan_links(data: dict, exclude: list[str] | tuple[str, ...] = ()) -> list[dic
         return _fallback_link(data)
 
     states = gateway_states(data)
+    grouped = _group_members(data)
     links: dict[str, dict] = {}
     for gw in configured:
-        if not _truthy(gw.get("upstream")) or _truthy(gw.get("disabled")):
+        if _truthy(gw.get("disabled")):
             continue
         ident = gw.get("interface")
         if not ident or ident in exclude:
+            continue
+        # Passerelle montante, ou membre d'un groupe de passerelles sur une
+        # interface qui n'est pas un tunnel (2e WAN dont la case « Upstream
+        # Gateway » n'est pas cochée).
+        if not _truthy(gw.get("upstream")) and not (
+            gw.get("name") in grouped and not _is_tunnel(data, ident, gw.get("if"))
+        ):
             continue
         link = links.setdefault(ident, {
             "id": ident,

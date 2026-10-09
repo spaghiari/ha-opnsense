@@ -653,7 +653,8 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         ).replace("@E@", json.dumps(s("temp_sfp")))),
         _heading(th, "Système"),
         _mini(th, s("ram_used_percent"), "RAM", "fr(v,1)+' %'", th["out"], "v"),
-        _mini(th, s("disk_root_percent"), "Disque /", "fr(v,0)+' %'", th["in"], "v"),
+        _mini(th, s("disk_root_percent"), "Disque", "fr(v,v<10?1:0)+' %'",
+              th["in"], "v"),
     ]}
 
     # ---- Top destinations ----
