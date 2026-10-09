@@ -44,6 +44,7 @@ A custom Home Assistant integration that exposes your **OPNsense firewall** as a
 - **With two or more WANs**: one set of entities per link (*\<link\> connected*, latency, loss, throughput in / out), created automatically
 - **Gateway groups**: one sensor per group whose state is the gateway carrying the traffic, with members per tier as attributes (recent OPNsense, optional privilege)
 - **WANs to ignore**: in the options, to leave a link out (e.g. a backup LTE)
+- **Dashboard**: a "WAN links" section (one card per link: state, latency, loss, throughput; one card per group showing the gateway carrying the traffic) and a "via <link>" banner; hidden with a single WAN
 
 ### Firmware management
 - **Native `update` entity** - compare installed vs latest version, one-click install

@@ -1,9 +1,9 @@
 """Création automatique du dashboard OPNsense en sidebar, en trois thèmes.
 
 Conçu pour être "plug and play" : à l'installation, l'intégration pose un
-dashboard de supervision (bandeau d'état, bande temps réel, courbe 24 h,
-connexion, températures, système, top destinations, tunnels VPN) dans le
-menu de gauche de Home Assistant.
+dashboard de supervision (bandeau d'état, liens WAN en multi-WAN, bande
+temps réel, courbe 24 h, connexion, températures, système, top
+destinations, tunnels VPN) dans le menu de gauche de Home Assistant.
 
 Trois thèmes au choix (option "dashboard_theme"), mêmes composants :
   * Graphite : sobre et mat, une seule couleur vive (orange OPNsense) ;
@@ -20,8 +20,9 @@ Points clés :
   * Best-effort et défensif : toute erreur est loggée et n'interrompt JAMAIS
     le chargement de l'intégration (l'API lovelace utilisée est semi-privée).
   * Géré par l'intégration : le gabarit est re-semé quand
-    DASHBOARD_TEMPLATE_VERSION augmente ou quand le thème change (les
-    éditions manuelles sont alors remplacées). Désactivable via l'option
+    DASHBOARD_TEMPLATE_VERSION augmente, quand le thème change ou quand les
+    liens WAN / groupes de passerelles changent (les éditions manuelles
+    sont alors remplacées). Désactivable via l'option
     "create_dashboard".
 """
 from __future__ import annotations
@@ -43,6 +44,7 @@ from .const import (
     DEFAULT_DASHBOARD_THEME,
     DOMAIN,
 )
+from .wans import links_with_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -396,6 +398,120 @@ def _tunnels(th: dict, entity: str) -> dict:
             "grid_options": {"columns": 12}}
 
 
+def _link_card(th: dict, link: dict, e: dict[str, str], main: str,
+               columns: int) -> dict:
+    """Carte d'un lien WAN : état, latence, pertes, débits entrant / sortant.
+
+    `main` = capteur de latence globale, dont l'attribut `wans` dit quel lien
+    porte la route par défaut. « En secours » = en ligne, hors route par
+    défaut et sans trafic notable.
+    """
+    pre = f"wan_{link['id']}_"
+    up, lat, loss = (e.get(pre + "connected"), e.get(pre + "latency"),
+                     e.get(pre + "packet_loss"))
+    rin, rout = e.get(pre + "throughput_in"), e.get(pre + "throughput_out")
+    watch = [x for x in (up, lat, loss, rin, rout, main) if x]
+    js = _js(th, (
+        "const w=(A(@MAIN@,'wans')||[]).find((x)=>x.id===@ID@)||{};"
+        "const on=S(@UP@)==='on',off=S(@UP@)==='off';"
+        "const li=N(@RIN@),lo=N(@ROUT@),la=N(@LAT@),ls=N(@LOSS@);"
+        "const idle=on&&!w.default&&!((li||0)+(lo||0)>0.1);"
+        "const c=off?T.bad:(idle?T.muted:T.ok);"
+        "const ch=states[@UP@]?new Date(states[@UP@].last_changed):null;"
+        "const hm=ch?ch.toLocaleTimeString('fr-FR',{hour:'2-digit',"
+        "minute:'2-digit'}):'';"
+        "const st=off?'Coupé'+(hm?' depuis '+hm:''):(idle?'En secours':"
+        "(on?'En ligne':'Inconnu'));"
+        "const mx=Math.max(10,li||0,lo||0);"
+        "const rate=(l,v,col)=>`<div style=\"display:grid;grid-template-columns:"
+        "64px minmax(0,1fr) 84px;gap:10px;align-items:center;font:500 12px "
+        "${T.sys};color:${T.muted}\"><span>${l}</span><div style=\"height:6px;"
+        "border-radius:99px;background:${T.track};overflow:hidden\"><i style=\""
+        "display:block;height:100%;width:${isNaN(v)?0:Math.max(v>0?2:0,"
+        "Math.min(100,v/mx*100))}%;border-radius:inherit;background:${col}\">"
+        "</i></div><span style=\"text-align:right;font:600 12.5px ${T.fn};"
+        "font-variant-numeric:tabular-nums;color:${off?T.muted:T.text}\">"
+        "${isNaN(v)?'–':(v<1?fr(v*1000,0)+' kb/s':fr(v,1)+' Mb/s')}</span></div>`;"
+        "const kpi=(l,v,u,p,col)=>`<div style=\"min-width:0\">${lab(l)}<div "
+        "style=\"font:700 22px ${T.fn};font-variant-numeric:tabular-nums;"
+        "margin-top:2px;color:${off?T.muted:T.text}\">${isNaN(v)?'–':fr(v,1)}"
+        "<small style=\"font:500 12px ${T.sys};color:${T.muted};margin-left:3px\">"
+        "${u}</small></div>${meter(p,col)}</div>`;"
+        "const lc=la>60?T.warn:T.ok;const sc=ls>=100?T.bad:(ls>2?T.warn:T.ok);"
+        "return `<div style=\"padding:14px 16px;display:grid;gap:12px;"
+        "${off?'box-shadow:inset 0 0 0 1px '+soft(T.bad,45)"
+        "+';border-radius:inherit;':''}"
+        "\"><div style=\"display:flex;align-items:flex-start;gap:10px\">"
+        "<div style=\"min-width:0\"><b style=\"font:600 15px ${T.sys}\">"
+        "${esc(@NAME@)}</b>${w.default?`<span style=\"font:600 10.5px ${T.sys};"
+        "color:${T.accent};border:1px solid ${soft(T.accent,50)};border-radius:6px;"
+        "padding:1px 6px;margin-left:8px;vertical-align:2px\">défaut</span>`:''}"
+        "<div style=\"font:500 11.5px ${T.mono};color:${T.muted};margin-top:2px;"
+        "white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">"
+        "${esc(@DEV@)} · ${esc(w.gateway||@GW@)}</div></div>"
+        "<span style=\"margin-left:auto\">${pill(st,c)}</span></div>"
+        "<div style=\"display:grid;grid-template-columns:repeat(2,minmax(0,1fr));"
+        "gap:12px\">${kpi('Latence',la,'ms',Math.min(100,la||0),lc)}"
+        "${kpi('Pertes',ls,'%',ls,sc)}</div><div style=\"display:grid;gap:8px\">"
+        "${rate('Entrant',li,T.in)}${rate('Sortant',lo,T.out)}</div></div>`;"
+    ), MAIN=main, ID=link["id"], UP=up or "", RIN=rin or "", ROUT=rout or "",
+        LAT=lat or "", LOSS=loss or "", NAME=link["name"],
+        DEV=link.get("device") or link["id"], GW=link.get("gateway") or "")
+    return _html(th, js, watch, columns, up)
+
+
+def _group_card(th: dict, entity: str, name: str, columns: int) -> dict:
+    """Carte d'un groupe de passerelles : membres par niveau, trafic actif."""
+    js = _js(th, (
+        "const tiers=A(@E@,'tiers')||[];const act=A(@E@,'active')||[];"
+        "const tr={down:'bascule si membre down',downloss:'bascule sur pertes',"
+        "downlatency:'bascule sur latence',downlosslatency:"
+        "'bascule sur pertes ou latence'}[A(@E@,'trigger')]||'';"
+        "const desc=[A(@E@,'description'),tr].filter((x)=>x).join(' · ');"
+        "const head=act.length?pill('Trafic sur '+act.join(' + '),T.ok):"
+        "pill('Hors ligne',T.bad);"
+        "const mem=(m)=>{const a=act.includes(m.name);"
+        "const c=m.usable?T.ok:(m.status?T.bad:T.muted);"
+        "return `<span style=\"display:inline-flex;align-items:center;gap:8px;"
+        "padding:6px 10px;border-radius:8px;font:500 12px ${T.mono};border:1px solid "
+        "${a?T.accent:T.track};${a?'box-shadow:inset 0 0 0 1px '+T.accent+';':''}"
+        "\"><i style=\"width:7px;height:7px;border-radius:50%;background:${c}\">"
+        "</i>${esc(m.name)}${a?`<span style=\"font:600 11px ${T.sys};"
+        "color:${T.accent}\">trafic</span>`:''}</span>`;};"
+        "const rows=tiers.map((t)=>`<div style=\"display:grid;grid-template-columns:"
+        "64px minmax(0,1fr);gap:10px;align-items:center\">${lab('Niveau '+t.tier)}"
+        "<div style=\"display:flex;flex-wrap:wrap;gap:8px\">"
+        "${(t.gateways||[]).map(mem).join('')}</div></div>`).join('');"
+        "return `<div style=\"padding:14px 16px;display:grid;gap:12px\">"
+        "<div style=\"display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap\">"
+        "<div style=\"min-width:0\"><b style=\"font:600 15px ${T.sys}\">Groupe "
+        "${esc(@NAME@)}</b><div style=\"font:500 12px ${T.sys};color:${T.muted};"
+        "margin-top:2px\">${esc(desc)||'&nbsp;'}</div></div><span style=\""
+        "margin-left:auto\">${head}</span></div><div style=\"display:grid;gap:8px\">"
+        "${rows}</div></div>`;"
+    ), E=entity, NAME=name)
+    return _html(th, js, [entity], columns, entity)
+
+
+def _wan_topology(hass: HomeAssistant | None, entry: ConfigEntry,
+                  e: dict[str, str]) -> tuple[list[dict], list[tuple[str, str]]]:
+    """Liens WAN qui ont leurs entités (multi-WAN) et groupes de passerelles."""
+    hub = (hass.data.get(DOMAIN, {}).get(entry.entry_id)
+           if hass is not None else None)
+    data = (getattr(getattr(hub, "fast", None), "data", None) or {})
+    links = [link for link in links_with_entities(data)
+             if f"wan_{link['id']}_connected" in e]
+    groups = [(e[f"gateway_group_{g['name']}"], g["name"])
+              for g in data.get("_wan_groups") or []
+              if f"gateway_group_{g['name']}" in e]
+    return links, groups
+
+
+def _topology_key(links: list[dict], groups: list[tuple[str, str]]) -> list[str]:
+    """Signature des liens / groupes affichés (re-semis quand elle change)."""
+    return [f"wan:{link['id']}" for link in links] + [f"group:{g}" for _, g in groups]
+
+
 def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
     """Construit la config lovelace dans le thème choisi."""
     theme_name, th = _theme(entry)
@@ -409,7 +525,10 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
     # ---- Bandeau d'état ----
     hero_js = _js(th, (
         "const up=S(@WAN@)==='on';const live=!isNaN(N(@CPU@));"
-        "const c=up?T.ok:T.bad;"
+        "const ws=A(@LAT@,'wans')||[];const multi=ws.length>1;"
+        "const down=ws.filter((w)=>w.online===false);"
+        "const via=(ws.find((w)=>w.default)||{}).name;"
+        "const c=!up?T.bad:(multi&&down.length?T.warn:T.ok);"
         "const host=S(@HOST@).split('.')[0].toUpperCase();"
         "const ver=S(@VER@).split('-')[0];"
         # Uptime OPNsense : "2 days, 02:41:10" / "1 day, 03:00:00" / "02:41:10".
@@ -428,15 +547,31 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "line-height:1.25\">${esc(host)}</div><div style=\"display:flex;"
         "flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:4px;"
         "font:500 12.5px ${T.mono};color:${T.muted}\">"
-        "${pill(up?'En ligne':'WAN coupé',c)}"
+        "${pill(!up?(multi?'Internet coupé':'WAN coupé'):(multi&&down.length?"
+        "'En ligne · '+down.map((w)=>w.name).join(', ')+' coupé':'En ligne'),c)}"
         "${live?pill('Temps réel',T.accent,true):''}"
+        "${multi&&up&&via?`<span>via ${esc(via)}</span>`:''}"
         "<span>OPNsense ${esc(ver)}</span><span>${esc(S(@IP@))}</span>"
         "<span>up ${upt}</span></div></div></div>`;"
     ), WAN=wan, CPU=s("cpu_usage"), HOST=s("hostname"),
-        VER=s("opnsense_version"), UPT=s("uptime"), IP=s("public_ipv4"))
+        VER=s("opnsense_version"), UPT=s("uptime"), IP=s("public_ipv4"),
+        LAT=s("wan_latency"))
     hero = _html(th, hero_js, [wan, s("cpu_usage"), s("hostname"),
-                               s("opnsense_version"), s("uptime"), s("public_ipv4")],
+                               s("opnsense_version"), s("uptime"), s("public_ipv4"),
+                               s("wan_latency")],
                  "full", wan, hero=True)
+
+    # ---- Liens WAN (multi-WAN uniquement) ----
+    links, groups = _wan_topology(hass, entry, e)
+    wan_section: list[dict] = []
+    if links:
+        count = len(links) + len(groups)
+        columns = 12 if count >= 3 else 18
+        wan_section = [{"type": "grid", "column_span": 3, "cards": [
+            _heading(th, "Liens WAN"),
+            *(_link_card(th, link, e, s("wan_latency"), columns) for link in links),
+            *(_group_card(th, ent, name, columns) for ent, name in groups),
+        ]}]
 
     # ---- Temps réel ----
     def serie(entity: str, name: str, color: str) -> dict:
@@ -545,12 +680,14 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "title": "OPNsense",
         "template_version": DASHBOARD_TEMPLATE_VERSION,
         "theme": theme_name,
+        "wan_topology": _topology_key(links, groups),
         "views": [{
             "title": "Pare-feu", "path": "pare-feu", "type": "sections",
             "max_columns": 3,
             "background": th["background"],
             "sections": [
                 {"type": "grid", "column_span": 3, "cards": [hero]},
+                *wan_section,
                 live, side, top, vpn,
             ],
         }],
@@ -638,10 +775,14 @@ async def async_register_dashboard(
             current = await storage.async_load(force=False)
             stored_v = (current or {}).get("template_version", 0)
             stored_theme = (current or {}).get("theme")
+            stored_topo = (current or {}).get("wan_topology", [])
         except Exception:  # noqa: BLE001 - ConfigNotFound & co.
-            stored_v, stored_theme = -1, None
-        # Re-sème si le gabarit a évolué ou si l'utilisateur a changé de thème.
-        if stored_v < DASHBOARD_TEMPLATE_VERSION or stored_theme != _theme(entry)[0]:
+            stored_v, stored_theme, stored_topo = -1, None, []
+        # Re-sème si le gabarit a évolué, si l'utilisateur a changé de thème ou
+        # si un lien WAN / groupe de passerelles est apparu ou a disparu.
+        topo = _topology_key(*_wan_topology(hass, entry, _entity_map(hass, entry)))
+        if (stored_v < DASHBOARD_TEMPLATE_VERSION
+                or stored_theme != _theme(entry)[0] or stored_topo != topo):
             await storage.async_save(_build_dashboard_config(hass, entry))
             _LOGGER.debug("Dashboard OPNsense semé/rafraîchi (v%s)",
                           DASHBOARD_TEMPLATE_VERSION)

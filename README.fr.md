@@ -44,6 +44,7 @@ Une intégration custom Home Assistant qui expose votre **firewall OPNsense** so
 - **Avec deux WAN ou plus** : un jeu d'entités par lien (*\<lien\> connecté*, latence, pertes, débit entrant / sortant), créé automatiquement
 - **Groupes de passerelles** : un capteur par groupe, dont l'état est la passerelle qui porte le trafic, avec les membres par niveau en attributs (OPNsense récent, privilège optionnel)
 - **WAN à ignorer** : dans les options, pour écarter un lien (ex. une 4G de secours)
+- **Dashboard** : section « Liens WAN » (une carte par lien : état, latence, pertes, débits ; une carte par groupe avec la passerelle qui porte le trafic) et bandeau « via <lien> » ; masquée avec un seul WAN
 
 ### Gestion firmware
 - **Entité `update` native** - compare version installée vs disponible, bouton "Installer" en un clic

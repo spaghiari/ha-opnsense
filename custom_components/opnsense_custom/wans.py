@@ -111,7 +111,8 @@ def wan_links(data: dict, exclude: list[str] | tuple[str, ...] = ()) -> list[dic
             continue
         link = links.setdefault(ident, {
             "id": ident,
-            "name": gw.get("interface_descr") or str(ident).upper(),
+            "name": (gw.get("interface_descr") or str(ident).upper())
+            .removeprefix("IFACE_"),
             "device": gw.get("if"),
             "gateways": [],
             "_v4": None, "_v6": None,
