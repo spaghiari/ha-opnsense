@@ -26,4 +26,4 @@ This integration uses an **API key with minimal privileges** (read-only + firmwa
 
 ## Tested Against
 
-OPNsense 26.1.x · Home Assistant Core 2024.4+
+OPNsense 26.1.x · Home Assistant Core 2025.2+

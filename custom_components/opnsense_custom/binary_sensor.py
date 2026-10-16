@@ -74,7 +74,8 @@ async def async_setup_entry(
     async_add_entities(entities)
 
     # Multi-WAN : un « <lien> connecté » par lien, ajouté dès qu'il apparaît.
-    known: set[str] = set()
+    # `known` vit sur le hub : cleanup.py en retire les liens supprimés.
+    known = coordinator.dynamic_known.setdefault("binary_sensor", set())
 
     def _sync_links() -> None:
         new = []

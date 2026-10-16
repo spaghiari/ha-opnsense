@@ -20,20 +20,31 @@ Points clés :
   * Best-effort et défensif : toute erreur est loggée et n'interrompt JAMAIS
     le chargement de l'intégration (l'API lovelace utilisée est semi-privée).
   * Géré par l'intégration : le gabarit est re-semé quand
-    DASHBOARD_TEMPLATE_VERSION augmente, quand le thème change ou quand les
-    liens WAN / groupes de passerelles changent (les éditions manuelles
-    sont alors remplacées). Désactivable via l'option
-    "create_dashboard".
+    DASHBOARD_TEMPLATE_VERSION augmente, quand le thème change, quand les
+    liens WAN / groupes de passerelles changent ou qu'une entité du firewall
+    est renommée. JAMAIS d'écrasement silencieux : l'empreinte de la config
+    semée est mémorisée (registre persistant `opnsense_custom.dashboards`,
+    qui fige aussi l'URL de chaque firewall) ; si le dashboard a été retouché,
+    une alerte Réparations propose de le réinitialiser (au choix de
+    l'utilisateur). Limite connue : ce dashboard n'apparaît pas dans
+    Paramètres > Tableaux de bord (panneau enregistré hors de la collection
+    lovelace). Désactivable via l'option "create_dashboard".
+  * Nécessite Home Assistant 2025.2.0+ (LOVELACE_DATA) ; avant, un warning
+    unique est loggé et le dashboard est ignoré.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.storage import Store
 
 from .const import (
     CONF_CREATE_DASHBOARD,
@@ -44,6 +55,7 @@ from .const import (
     DEFAULT_DASHBOARD_THEME,
     DOMAIN,
 )
+from .repairs import create_dashboard_issue, delete_dashboard_issue
 from .wans import links_with_entities
 
 _LOGGER = logging.getLogger(__name__)
@@ -486,7 +498,7 @@ def _group_card(th: dict, entity: str, name: str, columns: int) -> dict:
         "downlatency:'bascule sur latence',downlosslatency:"
         "'bascule sur pertes ou latence'}[A(@E@,'trigger')]||'';"
         "const desc=[A(@E@,'description'),tr].filter((x)=>x).join(' · ');"
-        "const head=act.length?pill('Trafic sur '+act.join(' + '),T.ok):"
+        "const head=act.length?pill('Trafic sur '+esc(act.join(' + ')),T.ok):"
         "pill('Hors ligne',T.bad);"
         "const mem=(m)=>{const a=act.includes(m.name);"
         "const c=m.usable?T.ok:(m.status?T.bad:T.muted);"
@@ -530,9 +542,46 @@ def _topology_key(links: list[dict], groups: list[tuple[str, str]]) -> list[str]
     return [f"wan:{link['id']}" for link in links] + [f"group:{g}" for _, g in groups]
 
 
-def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
-    """Construit la config lovelace dans le thème choisi."""
+# Rendu "legacy" du gabarit v14 (sans les deux esc() ajoutés en v15) : sert à
+# prouver qu'un dashboard semé par 2.3.8 (sans empreinte) n'a pas été retouché.
+LEGACY_TEMPLATE_VERSION = 14
+_LEGACY_V14_SUBS = (
+    ("pill('Trafic sur '+esc(act.join(' + ')),T.ok)",
+     "pill('Trafic sur '+act.join(' + '),T.ok)"),
+    ("'En ligne · '+esc(down.map((w)=>w.name).join(', '))+' coupé'",
+     "'En ligne · '+down.map((w)=>w.name).join(', ')+' coupé'"),
+)
+
+
+def _to_legacy_v14(node: Any) -> Any:
+    """Défait récursivement les deux esc() de la v15 dans une config rendue."""
+    if isinstance(node, str):
+        for new, old in _LEGACY_V14_SUBS:
+            node = node.replace(new, old)
+        return node
+    if isinstance(node, list):
+        return [_to_legacy_v14(x) for x in node]
+    if isinstance(node, dict):
+        return {k: _to_legacy_v14(v) for k, v in node.items()}
+    return node
+
+
+def _build_dashboard_config(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    *,
+    legacy_v14: bool = False,
+    theme: str | None = None,
+) -> dict:
+    """Construit la config lovelace dans le thème choisi.
+
+    `legacy_v14` rend le gabarit tel que livré en v14 (version incluse) et
+    `theme` impose le thème (celui stocké) : usage réservé à la preuve
+    "dashboard 2.3.8 non retouché".
+    """
     theme_name, th = _theme(entry)
+    if theme in THEMES:
+        theme_name, th = theme, THEMES[theme]
     e = _entity_map(hass, entry)
 
     def s(key: str) -> str:
@@ -566,7 +615,7 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:4px;"
         "font:500 12.5px ${T.mono};color:${T.muted}\">"
         "${pill(!up?(multi?'Internet coupé':'WAN coupé'):(multi&&down.length?"
-        "'En ligne · '+down.map((w)=>w.name).join(', ')+' coupé':'En ligne'),c)}"
+        "'En ligne · '+esc(down.map((w)=>w.name).join(', '))+' coupé':'En ligne'),c)}"
         "${live?pill('Temps réel',T.accent,true):''}"
         "${multi&&up&&via?`<span>via ${esc(via)}</span>`:''}"
         "<span>OPNsense ${esc(ver)}</span><span>${esc(S(@IP@))}</span>"
@@ -700,7 +749,7 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
               columns=6),
     ]}
 
-    return {
+    config = {
         "title": "OPNsense",
         "template_version": DASHBOARD_TEMPLATE_VERSION,
         "theme": theme_name,
@@ -721,6 +770,10 @@ def _build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
             ],
         }],
     }
+    if legacy_v14:
+        config = _to_legacy_v14(config)
+        config["template_version"] = LEGACY_TEMPLATE_VERSION
+    return config
 
 
 def _missing_resources(hass: HomeAssistant) -> list[str]:
@@ -740,24 +793,165 @@ def _missing_resources(hass: HomeAssistant) -> list[str]:
         return []
 
 
-def _dashboard_url(hass: HomeAssistant, entry: ConfigEntry) -> tuple[str, str]:
-    """url_path et titre du dashboard de CE firewall.
+# ---- Registre persistant des dashboards ----
+# Store `opnsense_custom.dashboards` : entry_id -> {url_path, seeded_hash}.
+# Il fige l'URL de chaque firewall (elle ne dépend plus du rang de l'entrée) et
+# mémorise l'empreinte de la config au moment du semis, pour détecter les
+# retouches manuelles.
+_REGISTRY_VERSION = 1
+_K_REGISTRY = "_dash_registry"
+_K_STORE = "_dash_store"
+_K_LOCK = "_dash_lock"
+_K_WATCH = "_dash_watch"
+_K_WARNED = "_dash_import_warned"
+# Anti-rebond (s) du re-semis après un renommage d'entité.
+RENAME_DEBOUNCE = 10
 
-    Le premier firewall configuré garde "opnsense" (rétro-compatible) ; les
-    suivants obtiennent "opnsense-2", "opnsense-3"... pour ne pas s'écraser.
-    """
+
+def _rank_url(hass: HomeAssistant, entry: ConfigEntry) -> str:
+    """URL historique (par rang) : "opnsense", "opnsense-2", "opnsense-3"..."""
     entry_ids = [e.entry_id for e in hass.config_entries.async_entries(DOMAIN)]
     rank = entry_ids.index(entry.entry_id) + 1 if entry.entry_id in entry_ids else 1
-    if rank == 1:
-        return DASHBOARD_URL_PATH, "OPNsense"
-    return f"{DASHBOARD_URL_PATH}-{rank}", f"OPNsense {rank}"
+    return DASHBOARD_URL_PATH if rank == 1 else f"{DASHBOARD_URL_PATH}-{rank}"
+
+
+async def _async_registry(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
+    """Registre persistant (chargé une fois ; amorcé à la première utilisation).
+
+    Amorçage : sans fichier, l'URL calculée par rang est figée pour chaque
+    entrée existante, afin qu'aucune URL déjà en service ne change.
+    """
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    lock = domain_data.setdefault(_K_LOCK, asyncio.Lock())
+    async with lock:
+        registry = domain_data.get(_K_REGISTRY)
+        if registry is None:
+            store = domain_data.setdefault(
+                _K_STORE, Store(hass, _REGISTRY_VERSION, f"{DOMAIN}.dashboards")
+            )
+            raw = await store.async_load()
+            if raw is None:
+                registry = {
+                    e.entry_id: {"url_path": _rank_url(hass, e)}
+                    for e in hass.config_entries.async_entries(DOMAIN)
+                }
+                await store.async_save({"dashboards": registry})
+            else:
+                registry = dict(raw.get("dashboards", {}))
+            domain_data[_K_REGISTRY] = registry
+    return registry
+
+
+async def _async_save_registry(hass: HomeAssistant) -> None:
+    """Écrit le registre sur disque."""
+    domain_data = hass.data.get(DOMAIN, {})
+    store = domain_data.get(_K_STORE)
+    registry = domain_data.get(_K_REGISTRY)
+    if store is not None and registry is not None:
+        await store.async_save({"dashboards": registry})
+
+
+async def _async_record(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
+    """Enregistrement de CE firewall ; en crée un (premier URL libre) si absent."""
+    registry = await _async_registry(hass)
+    rec = registry.get(entry.entry_id)
+    if rec is None:
+        taken = {r.get("url_path") for r in registry.values()}
+        url_path, n = DASHBOARD_URL_PATH, 1
+        while url_path in taken:
+            n += 1
+            url_path = f"{DASHBOARD_URL_PATH}-{n}"
+        rec = registry[entry.entry_id] = {"url_path": url_path}
+        await _async_save_registry(hass)
+    return rec
+
+
+def _title_for(url_path: str) -> str:
+    """Titre de sidebar déduit de l'URL ("opnsense-2" -> "OPNsense 2")."""
+    if url_path == DASHBOARD_URL_PATH:
+        return "OPNsense"
+    return f"OPNsense {url_path.rsplit('-', 1)[-1]}"
+
+
+def _config_hash(config: Any) -> str:
+    """Empreinte stable d'une config lovelace (détection des retouches)."""
+    # Aller-retour JSON : mêmes types natifs que la config relue du disque.
+    native = json.loads(json.dumps(config))
+    raw = json.dumps(native, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def _async_seed(
+    hass: HomeAssistant, entry: ConfigEntry, storage: Any, rec: dict[str, Any]
+) -> None:
+    """Sème le gabarit, mémorise l'empreinte de la config, ferme l'alerte."""
+    await storage.async_save(_build_dashboard_config(hass, entry))
+    # Empreinte de ce que la storage sert réellement après le semis.
+    rec["seeded_hash"] = _config_hash(await storage.async_load(force=False))
+    await _async_save_registry(hass)
+    delete_dashboard_issue(hass, entry)
+    _LOGGER.debug("Dashboard OPNsense semé/rafraîchi (v%s)",
+                  DASHBOARD_TEMPLATE_VERSION)
+
+
+@callback
+def _async_watch_renames(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Re-sème (avec anti-rebond) quand une entité de l'entrée est renommée.
+
+    Le re-semis passe par la même protection que les autres : un dashboard
+    retouché n'est pas écrasé (alerte Réparations à la place).
+    """
+    watched: set[str] = hass.data.setdefault(DOMAIN, {}).setdefault(_K_WATCH, set())
+    if entry.entry_id in watched:
+        return
+    watched.add(entry.entry_id)
+    timer: list[Any] = []
+
+    async def _refresh(_now: Any) -> None:
+        timer.clear()
+        await async_register_dashboard(hass, entry, refresh=True)
+
+    @callback
+    def _on_registry_updated(event: Event) -> None:
+        data = event.data
+        if (data.get("action") != "update"
+                or "entity_id" not in (data.get("changes") or {})):
+            return
+        reg_entry = er.async_get(hass).async_get(data.get("entity_id"))
+        if reg_entry is None or reg_entry.config_entry_id != entry.entry_id:
+            return
+        if timer:
+            timer.pop()()
+        timer.append(async_call_later(hass, RENAME_DEBOUNCE, _refresh))
+
+    @callback
+    def _cleanup() -> None:
+        watched.discard(entry.entry_id)
+        if timer:
+            timer.pop()()
+
+    entry.async_on_unload(
+        hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _on_registry_updated)
+    )
+    entry.async_on_unload(_cleanup)
 
 
 async def async_register_dashboard(
-    hass: HomeAssistant, entry: ConfigEntry
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    *,
+    force: bool = False,
+    refresh: bool = False,
 ) -> None:
-    """Pose (ou rafraîchit) le dashboard OPNsense dans la sidebar. Best-effort."""
+    """Pose (ou rafraîchit) le dashboard OPNsense dans la sidebar. Best-effort.
+
+    `refresh` force un re-semis (renommage d'entité) ; `force` le fait même sur
+    un dashboard retouché (confirmation de l'utilisateur dans Réparations).
+    Sans `force`, un dashboard retouché n'est JAMAIS écrasé.
+    """
     if not entry.options.get(CONF_CREATE_DASHBOARD, DEFAULT_CREATE_DASHBOARD):
+        # Dashboard désactivé : l'alerte de réinitialisation n'a plus d'objet.
+        delete_dashboard_issue(hass, entry)
         return
 
     try:
@@ -771,7 +965,18 @@ async def async_register_dashboard(
         from homeassistant.components.lovelace.const import (  # noqa: PLC0415
             MODE_STORAGE,
         )
+    except ImportError as err:
+        # LOVELACE_DATA n'existe qu'à partir de HA 2025.2.0 : une seule fois.
+        domain_data = hass.data.setdefault(DOMAIN, {})
+        if not domain_data.get(_K_WARNED):
+            domain_data[_K_WARNED] = True
+            _LOGGER.warning(
+                "Dashboard OPNsense ignoré : API lovelace introuvable (%s). "
+                "Home Assistant 2025.2.0 ou plus récent est requis.", err
+            )
+        return
 
+    try:
         lovelace_data = hass.data.get(LOVELACE_DATA)
         if lovelace_data is None:
             _LOGGER.debug("lovelace pas encore prêt - dashboard non créé")
@@ -785,15 +990,13 @@ async def async_register_dashboard(
                 ", ".join(missing),
             )
 
-        url_path, title = _dashboard_url(hass, entry)
+        rec = await _async_record(hass, entry)
+        url_path = rec["url_path"]
         item = {
-            "id": url_path, "url_path": url_path, "title": title,
+            "id": url_path, "url_path": url_path, "title": _title_for(url_path),
             "icon": "mdi:shield-lock", "show_in_sidebar": True,
             "require_admin": False,
         }
-
-        store = hass.data.setdefault(DOMAIN, {}).setdefault("_dashboards", {})
-        store[entry.entry_id] = url_path
 
         storage = lovelace_data.dashboards.get(url_path)
         if storage is None:
@@ -802,21 +1005,42 @@ async def async_register_dashboard(
 
         try:
             current = await storage.async_load(force=False)
-            stored_v = (current or {}).get("template_version", 0)
-            stored_theme = (current or {}).get("theme")
-            stored_topo = (current or {}).get("wan_topology", [])
         except Exception:  # noqa: BLE001 - ConfigNotFound & co.
-            stored_v, stored_theme, stored_topo = -1, None, []
-        # Re-sème si le gabarit a évolué, si l'utilisateur a changé de thème ou
-        # si un lien WAN / groupe de passerelles est apparu ou a disparu.
+            current = None
+        # Re-sème si le gabarit a évolué, si l'utilisateur a changé de thème, si
+        # un lien WAN / groupe de passerelles est apparu ou a disparu, ou sur
+        # demande (renommage d'entité).
         topo = _topology_key(*_wan_topology(hass, entry, _entity_map(hass, entry)))
-        if (stored_v < DASHBOARD_TEMPLATE_VERSION
-                or stored_theme != _theme(entry)[0] or stored_topo != topo):
-            await storage.async_save(_build_dashboard_config(hass, entry))
-            _LOGGER.debug("Dashboard OPNsense semé/rafraîchi (v%s)",
-                          DASHBOARD_TEMPLATE_VERSION)
+        if current and rec.get("seeded_hash") is None:
+            # Semé par une version sans registre (2.3.8) : pas d'empreinte. Il
+            # est prouvé intact s'il est identique au rendu legacy v14 (avec le
+            # thème stocké) ; sinon il reste "inconnu" donc protégé.
+            if current.get("template_version") == LEGACY_TEMPLATE_VERSION and (
+                _config_hash(current) == _config_hash(_build_dashboard_config(
+                    hass, entry, legacy_v14=True, theme=current.get("theme")))
+            ):
+                rec["seeded_hash"] = _config_hash(current)
+                await _async_save_registry(hass)
+        if not current:
+            # Absent ou vide : rien à protéger.
+            await _async_seed(hass, entry, storage, rec)
+        elif (refresh
+                or current.get("template_version", 0) < DASHBOARD_TEMPLATE_VERSION
+                or current.get("theme") != _theme(entry)[0]
+                or current.get("wan_topology", []) != topo):
+            if force or rec.get("seeded_hash") == _config_hash(current):
+                await _async_seed(hass, entry, storage, rec)
+            else:
+                # Retouché (ou semé avant l'existence du registre, donc
+                # invérifiable) : on n'écrase pas, on prévient.
+                create_dashboard_issue(hass, entry, url_path)
+                _LOGGER.info(
+                    "Dashboard %s modifié manuellement : mise à jour du "
+                    "gabarit proposée dans Réparations", url_path
+                )
 
         _register_panel(hass, url_path, MODE_STORAGE, item, update=True)
+        _async_watch_renames(hass, entry)
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning(
             "Création du dashboard OPNsense impossible (non bloquant): %s", err
@@ -828,7 +1052,8 @@ async def async_unregister_dashboard(
 ) -> None:
     """Retire le panneau de la sidebar (sans supprimer la config stockée)."""
     url_path = (
-        hass.data.get(DOMAIN, {}).get("_dashboards", {}).get(entry.entry_id)
+        hass.data.get(DOMAIN, {}).get(_K_REGISTRY, {})
+        .get(entry.entry_id, {}).get("url_path")
     )
     if not url_path:
         return
@@ -847,21 +1072,38 @@ async def async_unregister_dashboard(
 async def async_delete_dashboard(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
-    """Supprime définitivement le dashboard (config stockée incluse)."""
-    url_path = (
-        hass.data.get(DOMAIN, {}).get("_dashboards", {}).pop(entry.entry_id, None)
-    )
+    """Supprime définitivement le dashboard (config, enregistrement, alerte).
+
+    Fonctionne même si l'entrée n'a pas été chargée pendant la session : l'URL
+    vient du registre persistant.
+    """
+    delete_dashboard_issue(hass, entry)
+    registry = await _async_registry(hass)
+    rec = registry.pop(entry.entry_id, None)
+    url_path = rec.get("url_path") if rec else None
+    if rec is not None:
+        await _async_save_registry(hass)
+    # Sans enregistrement : l'entrée n'a jamais eu de dashboard (l'amorçage
+    # couvre toutes les entrées antérieures), on ne supprime rien.
     if not url_path:
         return
     try:
         from homeassistant.components import frontend  # noqa: PLC0415
         from homeassistant.components.lovelace import LOVELACE_DATA  # noqa: PLC0415
+        from homeassistant.components.lovelace import (  # noqa: PLC0415
+            dashboard as lovelace_dashboard,
+        )
 
         frontend.async_remove_panel(hass, url_path)
         lovelace_data = hass.data.get(LOVELACE_DATA)
         if lovelace_data is not None:
             storage = lovelace_data.dashboards.pop(url_path, None)
-            if storage is not None and hasattr(storage, "async_delete"):
+            if storage is None:
+                # Entrée non chargée : on ouvre le fichier pour le supprimer.
+                storage = lovelace_dashboard.LovelaceStorage(
+                    hass, {"id": url_path, "url_path": url_path}
+                )
+            if hasattr(storage, "async_delete"):
                 await storage.async_delete()
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("Suppression du dashboard %s: %s", url_path, err)

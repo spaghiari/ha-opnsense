@@ -48,7 +48,9 @@
     "error": {
       "cannot_connect": "Impossible de se connecter au firewall. Vérifie l'IP/port et que HA peut joindre OPNsense.",
       "invalid_auth": "Clé API ou secret invalide.",
-      "insufficient_privileges": "L'utilisateur API n'a pas les privilèges requis. Voir la documentation pour la liste des privilèges minimaux."
+      "insufficient_privileges": "L'utilisateur API n'a pas les privilèges requis. Voir la documentation pour la liste des privilèges minimaux.",
+      "invalid_host": "Hôte invalide : saisissez un nom d'hôte ou une adresse IP, et vérifiez que le port saisi dans l'hôte correspond au champ Port.",
+      "unknown": "Une erreur inattendue est survenue. Consultez les journaux de Home Assistant."
     },
     "abort": {
       "already_configured": "Ce firewall OPNsense est déjà configuré.",
@@ -156,6 +158,23 @@
     "missing_privilege": {
       "title": "OPNsense : droit API « {privilege} » manquant",
       "description": "L'utilisateur API de Home Assistant sur {host} n'a pas le droit **{privilege}**. Sans lui, l'intégration fonctionne en mode réduit : {impact}.\n\nPour corriger : dans OPNsense, Système → Accès → Utilisateurs, ouvre l'utilisateur de l'API, ajoute **{privilege}** dans « Privilèges effectifs », enregistre. Cette alerte disparaît toute seule au rafraîchissement suivant.\n\nSi tu ne veux pas de cette fonction, ignore simplement l'alerte."
+    },
+    "dashboard_edited": {
+      "title": "OPNsense : une nouvelle mise en page du dashboard « {url_path} » est disponible",
+      "description": "Le dashboard OPNsense (/{url_path}) de {host} a une nouvelle mise en page (nouvelle version du gabarit, thème, liens WAN ou entités renommées), mais il a été modifié à la main (ou, s'il a été créé par une version antérieure, il n'a pas pu être vérifié intact) : il n'a donc PAS été écrasé.\n\nTu peux le garder tel quel (ignore cette alerte) ou le réinitialiser vers la nouvelle mise en page : tes modifications seront perdues.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Réinitialiser le dashboard ?",
+            "description": "Réinitialiser le dashboard OPNsense (/{url_path}) vers la nouvelle mise en page ? **Tes modifications manuelles seront perdues.**"
+          }
+        },
+        "abort": {
+          "entry_not_loaded": "L'intégration OPNsense n'est pas chargée : recharge-la puis réessaie.",
+          "dashboard_disabled": "L'option dashboard est désactivée : active-la dans les options de l'intégration puis réessaie.",
+          "reset_failed": "La réinitialisation a échoué : le dashboard n'a pas pu être réécrit. Consulte les logs (opnsense_custom)."
+        }
+      }
     }
   },
   "entity": {
@@ -199,6 +218,8 @@
       "link_packet_loss": { "name": "Pertes de paquets {wan}" },
       "link_throughput_in": { "name": "Débit {wan} entrant" },
       "link_throughput_out": { "name": "Débit {wan} sortant" },
+      "link_total_received": { "name": "Total reçu {wan}" },
+      "link_total_transmitted": { "name": "Total transmis {wan}" },
       "gateway_group": { "name": "Groupe {group}" }
     },
     "binary_sensor": {

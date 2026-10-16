@@ -119,6 +119,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     # Listener pour recharger si les options changent (ex: nouveau scan_interval)
+    # Recharge seulement si les options changent : reauth et reconfigure
+    # (data / unique_id) rechargent déjà via async_update_reload_and_abort.
+    applied_options = dict(entry.options)
+
+    async def _async_options_updated(
+        hass: HomeAssistant, entry: ConfigEntry
+    ) -> None:
+        """Recharge l'intégration quand les options changent."""
+        if dict(entry.options) == applied_options:
+            return
+        await hass.config_entries.async_reload(entry.entry_id)
+
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     # Charge les plateformes (sensor, binary_sensor, button, update)
@@ -131,10 +143,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Alertes intégrées (étape "Notifications" des options) : écoute chaque
     # rafraîchissement ; le premier appel mémorise l'état de référence.
     alerts = OPNsenseAlerts(hass, entry, coordinator)
+    # Restaure l'état persisté avant la première évaluation (supprime le
+    # fichier si aucune alerte n'est active).
+    await alerts.async_load()
     if alerts.active:
         for source in (fast, coordinator):
             entry.async_on_unload(source.async_add_listener(alerts.handle_update))
         alerts.handle_update()
+    # Les callbacks on_unload s'exécutent en ordre inverse : le flush part en
+    # premier, mais les listeners sont retirés dans la même boucle synchrone,
+    # donc aucun cycle ne peut reprogrammer d'écriture ; async_save annule
+    # l'écriture différée en attente.
+    entry.async_on_unload(alerts.async_flush)
 
     return True
 
@@ -154,10 +174,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Nettoyage à la suppression de l'intégration : dashboard et alertes."""
     await async_delete_dashboard(hass, entry)
     delete_privilege_issues(hass, entry)
+    await OPNsenseAlerts.async_remove_store(hass, entry)
 
 
-async def _async_options_updated(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
-    """Recharge l'intégration quand les options changent."""
-    await hass.config_entries.async_reload(entry.entry_id)

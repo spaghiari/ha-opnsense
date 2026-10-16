@@ -27,7 +27,7 @@ Une intégration custom Home Assistant qui expose votre **firewall OPNsense** so
 ### Monitoring WAN
 - **Adresses IP publiques** IPv4 et IPv6
 - **Débit temps réel** (entrée/sortie en Mbps)
-- **Total transféré** (entrée/sortie en GB, type `TOTAL_INCREASING` compatible avec `utility_meter`)
+- **Total transféré** (entrée/sortie en GB, type `TOTAL_INCREASING` compatible avec `utility_meter`) : un cumul qui ne baisse jamais (plus de pics dans les statistiques à la reconnexion d'un lien ou au reboot du firewall), plus un total par lien en multi-WAN
 - **Top 5 destinations** avec résolution DNS inverse
 - **Connectivité WAN** (binary sensor)
 
@@ -61,7 +61,7 @@ Une intégration custom Home Assistant qui expose votre **firewall OPNsense** so
 ## 📋 Prérequis
 
 ### Versions supportées
-- Home Assistant Core **2024.4.0** ou plus récent
+- Home Assistant Core **2025.2.0** ou plus récent (le dashboard automatique nécessite l'API lovelace apparue en 2025.2 ; avant, l'intégration fonctionne mais le dashboard est ignoré avec un seul avertissement)
 - OPNsense **26.1** ou plus récent (versions antérieures peuvent fonctionner mais non testées)
 
 ### Configuration OPNsense
@@ -205,10 +205,17 @@ Si une carte manque, l'intégration loggue un avertissement (filtre
 installe-la puis recharge.
 
 > **Dashboard géré.** La mise en page est rafraîchie quand l'intégration livre
-> une nouvelle version de gabarit : tes éditions manuelles dessus peuvent être
-> écrasées lors d'une mise à jour. Pour personnaliser librement, désactive
-> l'option et duplique le dashboard, ou pars de
-> [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml).
+> une nouvelle version de gabarit, quand tu changes de thème, quand un lien WAN
+> apparaît ou disparaît, ou quand une entité du pare-feu est renommée. Tes
+> éditions manuelles ne sont **jamais écrasées en silence** : si le dashboard a
+> été modifié, une alerte **Réparations** (Paramètres → Système → Réparations)
+> propose de le réinitialiser vers la nouvelle mise en page (tes modifications
+> seraient alors perdues) - ou ignore-la pour garder le tien. L'URL du
+> dashboard de chaque pare-feu est mémorisée et ne change plus.
+> Limite connue : ce dashboard n'apparaît pas dans Paramètres → Tableaux de
+> bord (il est enregistré directement dans la barre latérale). Pour
+> personnaliser librement, désactive l'option et duplique le dashboard, ou pars
+> de [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml).
 
 ---
 

@@ -48,7 +48,9 @@
     "error": {
       "cannot_connect": "Unable to reach the firewall. Check the IP/port and that HA can reach OPNsense.",
       "invalid_auth": "Invalid API key or secret.",
-      "insufficient_privileges": "The API user lacks the required privileges. See the documentation for the minimal privilege list."
+      "insufficient_privileges": "The API user lacks the required privileges. See the documentation for the minimal privilege list.",
+      "invalid_host": "Invalid host: enter a hostname or IP address, and make sure the port in the host matches the Port field.",
+      "unknown": "An unexpected error occurred. Check the Home Assistant logs."
     },
     "abort": {
       "already_configured": "This OPNsense firewall is already configured.",
@@ -156,6 +158,23 @@
     "missing_privilege": {
       "title": "OPNsense: missing API privilege \"{privilege}\"",
       "description": "The Home Assistant API user on {host} lacks the **{privilege}** privilege. Without it the integration runs in reduced mode: {impact}.\n\nTo fix it: in OPNsense, System → Access → Users, edit the API user, add **{privilege}** to \"Effective Privileges\" and save. This alert clears itself on the next refresh.\n\nIf you don't need this feature, just ignore the alert."
+    },
+    "dashboard_edited": {
+      "title": "OPNsense: dashboard \"{url_path}\" has a new layout available",
+      "description": "The OPNsense dashboard (/{url_path}) for {host} has a new layout (new template version, theme, WAN links or renamed entities), but it was edited by hand (or, for a dashboard created by an older version, it could not be verified as untouched), so it was NOT overwritten.\n\nYou can keep it as is (ignore this alert), or reset it to the new layout: your changes will be lost.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Reset the dashboard?",
+            "description": "Reset the OPNsense dashboard (/{url_path}) to the new layout? **Your manual changes will be lost.**"
+          }
+        },
+        "abort": {
+          "entry_not_loaded": "The OPNsense integration is not loaded: reload it, then try again.",
+          "dashboard_disabled": "The dashboard option is disabled: enable it in the integration options, then try again.",
+          "reset_failed": "The reset failed: the dashboard could not be rewritten. Check the logs (opnsense_custom)."
+        }
+      }
     }
   },
   "entity": {
@@ -199,6 +218,8 @@
       "link_packet_loss": { "name": "{wan} packet loss" },
       "link_throughput_in": { "name": "{wan} throughput in" },
       "link_throughput_out": { "name": "{wan} throughput out" },
+      "link_total_received": { "name": "{wan} total received" },
+      "link_total_transmitted": { "name": "{wan} total transmitted" },
       "gateway_group": { "name": "{group} group" }
     },
     "binary_sensor": {

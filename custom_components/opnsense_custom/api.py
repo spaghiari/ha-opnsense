@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 from collections.abc import AsyncIterator, Sequence
@@ -62,6 +63,12 @@ class OPNsenseApiClient:
         session : session aiohttp partagée (fournie par HA)
         verify_ssl : True pour vérifier le cert TLS (False par défaut, cert self-signed)
         """
+        # IPv6 littérale : l'URL exige des crochets (jamais pour hostname/IPv4).
+        try:
+            if ipaddress.ip_address(host).version == 6:
+                host = f"[{host}]"
+        except ValueError:
+            pass
         self._base_url = f"https://{host}:{port}"
         self._auth = BasicAuth(api_key, api_secret)
         self._session = session
@@ -263,3 +270,18 @@ class OPNsenseApiClient:
         Attention : opération longue côté OPNsense, redémarrage possible.
         """
         return await self.post("firmware_update")
+
+    async def async_run_upgrade(self) -> dict[str, Any]:
+        """Déclenche une mise à jour MAJEURE du firmware (statut "upgrade").
+
+        Attention : opération longue côté OPNsense, redémarrage probable.
+        """
+        return await self.post("firmware_upgrade")
+
+    async def async_get_upgrade_status(self) -> dict[str, Any]:
+        """Renvoie la progression de la mise à jour en cours.
+
+        Endpoint GET /firmware/upgradestatus : champ `status`
+        ("running", "done", "reboot", "error") et `log`.
+        """
+        return await self.get("firmware_upgradestatus")

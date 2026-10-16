@@ -107,6 +107,12 @@ def build_device_info(entry: ConfigEntry, data: dict | None) -> DeviceInfo:
     logicielle est extraite des `versions` quand elle est disponible.
     """
     host = entry.data.get("host", "OPNsense")
+    # IPv6 littérale entre crochets, port explicite s'il n'est pas 443
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = entry.data.get("port", 443)
+    if port and int(port) != 443:
+        host = f"{host}:{port}"
     sw_version: str | None = None
     if data:
         info = data.get("system_information") or {}
@@ -236,11 +242,13 @@ class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         now = monotonic()
         rates: dict[str, dict[str, int]] = {}
         seen: dict[str, tuple[float, int, int]] = {}
+        with_counters: list[str] = []
         for link in links or [{"id": self.wan_identifier,
                                "device": data["_wan_device"]}]:
             counters = wan_counters(data, link.get("device"))
             if counters is None:
                 continue
+            with_counters.append(link["id"])
             prev = self._prev_counters.get(link["id"])
             if prev is not None:
                 t0, rx0, tx0 = prev
@@ -255,10 +263,13 @@ class OPNsenseFastCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             seen[link["id"]] = (now, counters[0], counters[1])
         self._prev_counters = seen
         data["_wan_rates"] = rates
+        # Débit global : seulement si chaque lien muni de compteurs a un débit
+        # (sinon la somme serait partielle) ; None -> repli sur le top
+        # destinations côté capteur. Les débits par lien restent publiés.
         data["_wan_rate"] = {
             "in_bps": sum(r["in_bps"] for r in rates.values()),
             "out_bps": sum(r["out_bps"] for r in rates.values()),
-        } if rates else None
+        } if rates and all(i in rates for i in with_counters) else None
         return data
 
 
@@ -289,12 +300,25 @@ class OPNsenseDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry = entry
         self.fast = fast
         self.live: Any = None  # OPNsenseLiveCoordinator, posé par __init__.py
+        # Entités dynamiques déjà créées, par plateforme (liens WAN, groupes) :
+        # partagé avec cleanup.py, qui retire une clé à la suppression de
+        # l'entité pour qu'elle soit recréée si le lien / groupe réapparaît.
+        self.dynamic_known: dict[str, set[str]] = {
+            "sensor": set(), "binary_sensor": set(),
+        }
 
     @property
     def merged(self) -> dict[str, Any]:
         """Vue fusionnée lent + rapide + temps réel (s'il est frais)."""
         merged: dict[str, Any] = dict(self.data or {})
         merged.update(self.fast.data or {})
+        if not self.fast.last_update_success:
+            # Polling rapide en échec : `fast.data` garde la dernière valeur,
+            # les débits qui en dérivent seraient figés. On les retire de la
+            # vue (copie : fast.data n'est jamais muté) ; les capteurs
+            # retombent alors sur leurs autres sources ou deviennent inconnus.
+            for key in ("_wan_rate", "_wan_rates", "traffic_wan"):
+                merged.pop(key, None)
         if self.live is not None:
             merged["_live"] = self.live.fresh_data()
         return merged

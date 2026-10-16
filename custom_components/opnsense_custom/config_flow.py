@@ -1,12 +1,15 @@
 """Config flow pour OPNsense custom."""
 from __future__ import annotations
 
+import ipaddress
 import logging
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import voluptuous as vol
 from homeassistant.config_entries import (
+    SOURCE_IGNORE,
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
@@ -87,6 +90,74 @@ from .wans import wan_links
 
 _LOGGER = logging.getLogger(__name__)
 
+# Noms par défaut d'OPNsense : non discriminants, l'identifiant inclut alors l'hôte.
+_DEFAULT_NAMES = {"", "opnsense", "opnsense.localdomain", "opnsense.local", "localhost"}
+
+
+class _InvalidHostError(Exception):
+    """Saisie d'hôte/port invalide ou contradictoire."""
+
+
+def _split_host(raw: Any) -> tuple[str, int | None]:
+    """Extrait (hôte, port éventuel) de la saisie.
+
+    Retire le schéma, le chemin, les crochets IPv6 et un port accolé à l'hôte.
+    Renvoie ("", None) si la saisie est inexploitable.
+    """
+    text = str(raw or "").strip()
+    bare = text.strip("[]")
+    try:
+        # IPv6 littérale seule (avec ou sans crochets) : urlsplit la déformerait.
+        if ipaddress.ip_address(bare).version == 6:
+            return bare.lower(), None
+    except ValueError:
+        pass
+    if "://" not in text:
+        text = "//" + text
+    try:
+        parts = urlsplit(text)
+        return (parts.hostname or ""), parts.port
+    except ValueError:
+        return "", None
+
+
+def _normalize_host(raw: Any) -> str:
+    """Hôte nettoyé (minuscules, sans schéma/chemin/crochets/port)."""
+    return _split_host(raw)[0]
+
+
+def _clean_input(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Copie la saisie avec hôte normalisé et port reporté depuis l'hôte.
+
+    Lève `_InvalidHostError` si l'hôte est vide ou si son port contredit
+    le champ port explicitement modifié.
+    """
+    host, host_port = _split_host(user_input.get(CONF_HOST))
+    if not host:
+        raise _InvalidHostError
+    port = user_input.get(CONF_PORT, DEFAULT_PORT)
+    if host_port is not None:
+        if port == DEFAULT_PORT:
+            port = host_port
+        elif port != host_port:
+            raise _InvalidHostError
+    return {**user_input, CONF_HOST: host, CONF_PORT: port}
+
+
+def _legacy_uid(info: Any) -> str:
+    """Ancien format d'identifiant : le nom seul du firewall."""
+    name = info.get("name") if isinstance(info, dict) else None
+    return str(name or "").strip().lower()
+
+
+def _entry_uid(info: Any, host: str, port: Any) -> str:
+    """Identifiant unique : nom du firewall, ou nom@hôte:port si défaut/absent."""
+    name = _legacy_uid(info)
+    if name in _DEFAULT_NAMES:
+        return f"{name or 'opnsense'}@{_normalize_host(host).lower()}:{port}"
+    return name
+
+
 # Schéma du formulaire de connexion (réutilisé par user / reauth / reconfigure)
 def _credentials_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     """Construit le schéma des credentials, pré-rempli si `defaults` fourni."""
@@ -109,8 +180,13 @@ def _credentials_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     )
 
 
-def _wan_select_options(rows: Any) -> list[SelectOptionDict]:
-    """Construit la liste déroulante des interfaces (+ option auto)."""
+def _wan_select_options(
+    rows: Any, current: str | None = None
+) -> list[SelectOptionDict]:
+    """Construit la liste déroulante des interfaces (+ option auto).
+
+    `current` : valeur enregistrée, ajoutée si absente (entrée non chargée).
+    """
     options: list[SelectOptionDict] = [
         SelectOptionDict(value=WAN_AUTO, label="Auto-détection (recommandé)")
     ]
@@ -125,6 +201,8 @@ def _wan_select_options(rows: Any) -> list[SelectOptionDict]:
             options.append(
                 SelectOptionDict(value=device, label=f"{desc} ({device})")
             )
+    if current and all(opt["value"] != current for opt in options):
+        options.append(SelectOptionDict(value=current, label=current))
     return options
 
 
@@ -175,9 +253,12 @@ class OPNsenseConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
+                user_input = _clean_input(user_input)
                 info, rows = await _validate_and_get_interfaces(
                     self.hass, user_input
                 )
+            except _InvalidHostError:
+                errors["base"] = "invalid_host"
             except OPNsenseAuthError:
                 errors["base"] = "invalid_auth"
             except OPNsenseForbiddenError:
@@ -185,10 +266,21 @@ class OPNsenseConfigFlow(ConfigFlow, domain=DOMAIN):
             except OPNsenseApiError as err:
                 _LOGGER.error("Erreur lors du test : %s", err)
                 errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001 - filet de sécurité du flow
+                _LOGGER.exception("Erreur inattendue lors du test de connexion")
+                errors["base"] = "unknown"
             else:
-                # Empêche d'ajouter deux fois le même firewall
-                hostname = info.get("name", user_input[CONF_HOST])
-                await self.async_set_unique_id(hostname.lower())
+                # Empêche d'ajouter deux fois le même firewall, y compris face à
+                # une entrée à l'ancien format (nom seul) sur le même endpoint.
+                legacy = _legacy_uid(info)
+                if any(
+                    e.unique_id == legacy and self._same_endpoint(e, user_input)
+                    for e in self._async_current_entries(include_ignore=False)
+                ):
+                    return self.async_abort(reason="already_configured")
+                await self.async_set_unique_id(
+                    _entry_uid(info, user_input[CONF_HOST], user_input[CONF_PORT])
+                )
                 self._abort_if_unique_id_configured()
 
                 self._data = user_input
@@ -252,21 +344,22 @@ class OPNsenseConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            merged = {**entry.data, **user_input}
             try:
+                merged = _clean_input({**entry.data, **user_input})
                 info, _ = await _validate_and_get_interfaces(self.hass, merged)
+            except _InvalidHostError:
+                errors["base"] = "invalid_host"
             except OPNsenseAuthError:
                 errors["base"] = "invalid_auth"
             except OPNsenseForbiddenError:
                 errors["base"] = "insufficient_privileges"
             except OPNsenseApiError:
                 errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001 - filet de sécurité du flow
+                _LOGGER.exception("Erreur inattendue lors de la ré-authentification")
+                errors["base"] = "unknown"
             else:
-                # Garde : on doit ré-authentifier LE MÊME firewall, pas un autre
-                new_id = info.get("name", merged[CONF_HOST]).lower()
-                if entry.unique_id and entry.unique_id != new_id:
-                    return self.async_abort(reason="unique_id_mismatch")
-                return self.async_update_reload_and_abort(entry, data=merged)
+                return self._update_existing(entry, info, merged)
 
         return self.async_show_form(
             step_id="reauth_confirm",
@@ -289,29 +382,74 @@ class OPNsenseConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
+                user_input = _clean_input(user_input)
                 info, _ = await _validate_and_get_interfaces(
                     self.hass, user_input
                 )
+            except _InvalidHostError:
+                errors["base"] = "invalid_host"
             except OPNsenseAuthError:
                 errors["base"] = "invalid_auth"
             except OPNsenseForbiddenError:
                 errors["base"] = "insufficient_privileges"
             except OPNsenseApiError:
                 errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001 - filet de sécurité du flow
+                _LOGGER.exception("Erreur inattendue lors de la reconfiguration")
+                errors["base"] = "unknown"
             else:
-                # Garde : empêche de pointer l'entry vers un AUTRE firewall
-                new_id = info.get("name", user_input[CONF_HOST]).lower()
-                if entry.unique_id and entry.unique_id != new_id:
-                    return self.async_abort(reason="unique_id_mismatch")
-                return self.async_update_reload_and_abort(
-                    entry, data=user_input
-                )
+                return self._update_existing(entry, info, user_input)
 
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=_credentials_schema(entry.data),
             errors=errors,
         )
+
+    @staticmethod
+    def _same_endpoint(entry: ConfigEntry, data: Mapping[str, Any]) -> bool:
+        """Vrai si `data` vise le même hôte (normalisé) et port que l'entrée."""
+        return _normalize_host(entry.data.get(CONF_HOST)) == _normalize_host(
+            data.get(CONF_HOST)
+        ) and entry.data.get(CONF_PORT, DEFAULT_PORT) == data.get(
+            CONF_PORT, DEFAULT_PORT
+        )
+
+    def _uid_taken_by_other(self, entry: ConfigEntry, new_id: str) -> bool:
+        """Vrai si `new_id` est déjà porté par une AUTRE entrée (hors ignorées)."""
+        return any(
+            other.entry_id != entry.entry_id
+            and other.source != SOURCE_IGNORE
+            and other.unique_id == new_id
+            for other in self.hass.config_entries.async_entries(DOMAIN)
+        )
+
+    def _update_existing(
+        self, entry: ConfigEntry, info: Any, data: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Met à jour l'entrée (reauth / reconfigure) en gardant le garde-fou.
+
+        Un renommage du firewall est accepté en silence si l'endpoint ne
+        change pas. Si l'endpoint change, l'identifiant doit rester celui de
+        l'entrée (nouveau format ou ancien format = nom seul), sinon on
+        refuse : on ne repointe pas une entrée vers un AUTRE firewall.
+        """
+        new_id = _entry_uid(info, data[CONF_HOST], data[CONF_PORT])
+        if self._uid_taken_by_other(entry, new_id):
+            return self.async_abort(reason="already_configured")
+        if (
+            entry.unique_id
+            and not self._same_endpoint(entry, data)
+            and entry.unique_id not in (new_id, _legacy_uid(info))
+        ):
+            return self.async_abort(reason="unique_id_mismatch")
+        # Mise à jour unique (unique_id + data) : `unique_id` de
+        # `async_update_reload_and_abort` est absent des HA anciens.
+        if entry.unique_id != new_id:
+            self.hass.config_entries.async_update_entry(
+                entry, unique_id=new_id, data=data
+            )
+        return self.async_update_reload_and_abort(entry, data=data)
 
     @staticmethod
     @callback
@@ -357,6 +495,7 @@ class OPNsenseOptionsFlow(OptionsFlow):
         opts = self._entry.options
         rows = None
         links: list[dict] = []
+        current_exclude = list(opts.get(CONF_WAN_EXCLUDE) or [])
         coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
         if coordinator is not None and coordinator.data:
             # Les interfaces sont lues par le polling rapide (vue fusionnée).
@@ -366,6 +505,21 @@ class OPNsenseOptionsFlow(OptionsFlow):
             if merged.get("gateways"):
                 links = wan_links(merged)
 
+        # Entrée non chargée : on garde les valeurs enregistrées sélectionnables.
+        link_options = [
+            SelectOptionDict(
+                value=link["id"],
+                label=f"{link['name']} ({link['device'] or link['id']})",
+            )
+            for link in links
+        ]
+        known_ids = {opt["value"] for opt in link_options}
+        link_options += [
+            SelectOptionDict(value=wid, label=str(wid))
+            for wid in current_exclude
+            if wid not in known_ids
+        ]
+
         fields: dict[Any, Any] = {}
         if len(links) >= 2:
             # Multi-WAN : liens à ignorer (ex. une 4G de secours qu'on ne
@@ -374,13 +528,7 @@ class OPNsenseOptionsFlow(OptionsFlow):
                 CONF_WAN_EXCLUDE, default=opts.get(CONF_WAN_EXCLUDE, [])
             )] = SelectSelector(
                 SelectSelectorConfig(
-                    options=[
-                        SelectOptionDict(
-                            value=link["id"],
-                            label=f"{link['name']} ({link['device'] or link['id']})",
-                        )
-                        for link in links
-                    ],
+                    options=link_options,
                     multiple=True,
                     mode=SelectSelectorMode.LIST,
                 )
@@ -412,7 +560,9 @@ class OPNsenseOptionsFlow(OptionsFlow):
                     default=opts.get(CONF_WAN_INTERFACE, WAN_AUTO),
                 ): SelectSelector(
                     SelectSelectorConfig(
-                        options=_wan_select_options(rows),
+                        options=_wan_select_options(
+                            rows, opts.get(CONF_WAN_INTERFACE)
+                        ),
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),

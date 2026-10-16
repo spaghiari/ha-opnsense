@@ -24,6 +24,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .binary_sensor import _has_update_available, _wan_up
@@ -42,6 +43,7 @@ from .const import (
     CONF_NOTIFY_TARGETS,
     CONF_TEMP_THRESHOLD,
     CONF_WAN_DOWN_DELAY,
+    DEFAULT_ALERTS,
     DEFAULT_LATENCY_DURATION,
     DEFAULT_LATENCY_THRESHOLD,
     DEFAULT_NOTIFY_PERSISTENT,
@@ -49,6 +51,7 @@ from .const import (
     DEFAULT_WAN_DOWN_DELAY,
     DISK_ALERT_PCT,
     DISK_REARM_PCT,
+    DOMAIN,
     TEMP_REARM_DELTA,
 )
 from .coordinator import OPNsenseDataCoordinator
@@ -64,6 +67,36 @@ from .sensor import (
 from .wans import default_link
 
 _LOGGER = logging.getLogger(__name__)
+
+# Persistance de l'état des alertes (survit au reload / redémarrage de HA).
+STORE_VERSION = 1
+STORE_SAVE_DELAY = 5  # secondes : regroupe les écritures en rafale
+STORE_REFRESH = 3600  # secondes : rafraîchit `saved_at` même sans transition
+STORE_MAX_AGE = 7 * 86400  # secondes : au-delà, l'état est ignoré
+
+
+def _store_key(entry_id: str) -> str:
+    """Clé du fichier Store d'une entry."""
+    return f"{DOMAIN}.alerts.{entry_id}"
+
+
+def _iso(moment: datetime | None) -> str | None:
+    """Horodatage -> ISO 8601 (None conservé)."""
+    return moment.isoformat() if moment else None
+
+
+def _parse(value: Any) -> datetime | None:
+    """ISO 8601 -> datetime UTC ; None si absent, invalide ou dans le futur."""
+    if not isinstance(value, str):
+        return None
+    parsed = dt_util.parse_datetime(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt_util.UTC)
+    if parsed > dt_util.utcnow():
+        return None
+    return parsed
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -90,6 +123,11 @@ class _Outage:
         # Coupure qui vient de se terminer (pour le message « rétabli »).
         self.last_since: datetime | None = None
         self.last_elapsed = 0.0
+        # Coupure à cheval sur un redémarrage de HA : dernier relevé hors
+        # ligne avant l'arrêt (None sinon) ; sert à formuler « rétabli » sans
+        # inventer d'heure de retour ni de durée exacte.
+        self.restored_seen: datetime | None = None
+        self.last_seen: datetime | None = None
 
     def update(self, up: bool, now: datetime, delay: float) -> str | None:
         """Renvoie "down" / "up" quand il faut notifier, sinon None."""
@@ -104,9 +142,29 @@ class _Outage:
             return None
         self.last_since = self.since
         self.last_elapsed = (now - self.since).total_seconds()
+        self.last_seen, self.restored_seen = self.restored_seen, None
         notify = self.alerted or self.last_elapsed >= delay
         self.since, self.alerted = None, False
         return "up" if notify else None
+
+    def as_dict(self) -> dict[str, Any]:
+        """État minimal à persister."""
+        return {"since": _iso(self.since), "alerted": self.alerted}
+
+    @classmethod
+    def from_dict(cls, raw: Any, saved_at: datetime) -> _Outage:
+        """Reconstruit une coupure depuis l'état persisté (tolérant).
+
+        Seule une coupure déjà notifiée est reprise : sinon le délai de grâce
+        repart de zéro (référence prise à la première évaluation).
+        """
+        outage = cls()
+        if isinstance(raw, dict) and raw.get("alerted") is True:
+            since = _parse(raw.get("since"))
+            if since is not None and since <= saved_at:
+                outage.since, outage.alerted = since, True
+                outage.restored_seen = saved_at
+        return outage
 
 
 class OPNsenseAlerts:
@@ -123,7 +181,12 @@ class OPNsenseAlerts:
         self.entry = entry
         self.coordinator = coordinator
         options = entry.options
-        self.enabled: set[str] = set(options.get(CONF_ALERTS) or [])
+        # Clé absente (options jamais enregistrées) -> alertes par défaut,
+        # comme le formulaire ; liste vide explicite -> tout désactivé.
+        if CONF_ALERTS in options:
+            self.enabled: set[str] = set(options.get(CONF_ALERTS) or [])
+        else:
+            self.enabled = set(DEFAULT_ALERTS)
         self.targets: list[str] = list(options.get(CONF_NOTIFY_TARGETS) or [])
         self.persistent: bool = options.get(
             CONF_NOTIFY_PERSISTENT, DEFAULT_NOTIFY_PERSISTENT
@@ -153,6 +216,153 @@ class OPNsenseAlerts:
         self._tunnels_up: dict[str, bool] = {}
         self._disk_alerted = False
         self._temp_alerted = False
+        # Persistance : état restauré (None = rien) et dernier état écrit.
+        self._store: Store[dict[str, Any]] = Store(
+            hass, STORE_VERSION, _store_key(entry.entry_id)
+        )
+        self._restored: dict[str, Any] | None = None
+        # Clés effectivement reprises de l'état restauré (le reste : ligne
+        # de base prise depuis les données).
+        self._restored_keys: set[str] = set()
+        self._last_saved: dict[str, Any] | None = None
+        self._last_save_at: datetime | None = None
+
+    async def async_load(self) -> None:
+        """Charge l'état persisté ; à appeler avant la première évaluation.
+
+        Si aucune alerte n'est active, le fichier est supprimé : un état
+        ancien ne doit pas resservir si on recoche les alertes plus tard.
+        """
+        if not self.active:
+            await self._remove()
+            return
+        try:
+            raw = await self._store.async_load()
+        except Exception as err:  # noqa: BLE001 - fichier corrompu : repart à zéro
+            _LOGGER.debug("Lecture de l'état des alertes impossible: %s", err)
+            return
+        if isinstance(raw, dict):
+            self._restored = raw
+
+    async def async_flush(self) -> None:
+        """Écrit l'état courant tout de suite (déchargement de l'entry).
+
+        `async_save` annule l'écriture différée en attente : un reload rapide
+        relit l'état à jour, et aucun timer ne survit à l'instance.
+        """
+        if not self.active or not self._baseline_done:
+            return  # rien à écrire (le fichier existant reste intact)
+        try:
+            await self._store.async_save(self._data_to_save())
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Écriture de l'état des alertes impossible: %s", err)
+
+    async def _remove(self) -> None:
+        """Supprime le fichier (et annule toute écriture différée)."""
+        try:
+            await self._store.async_remove()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Suppression de l'état des alertes impossible: %s", err)
+
+    @staticmethod
+    async def async_remove_store(hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Supprime le fichier Store à la suppression de l'entry.
+
+        Appelé après le déchargement (donc après `async_flush`) : plus aucune
+        écriture différée ne peut recréer le fichier.
+        """
+        try:
+            store: Store[dict[str, Any]] = Store(
+                hass, STORE_VERSION, _store_key(entry.entry_id)
+            )
+            await store.async_remove()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Suppression de l'état des alertes impossible: %s", err)
+
+    def _snapshot(self) -> dict[str, Any]:
+        """État minimal à persister (JSON-sérialisable, sans horodatage)."""
+        return {
+            "internet": self._internet.as_dict(),
+            # Seules les coupures notifiées sont utiles après un redémarrage.
+            "links": {k: v.as_dict() for k, v in self._links.items() if v.alerted},
+            "latency_since": _iso(self._latency_high_since),
+            "latency_alerted": self._latency_alerted,
+            "update_available": self._update_available,
+            "stopped_services": sorted(self._stopped_services),
+            "tunnels_up": dict(self._tunnels_up),
+            "disk_alerted": self._disk_alerted,
+            "temp_alerted": self._temp_alerted,
+        }
+
+    def _data_to_save(self) -> dict[str, Any]:
+        """Snapshot + `saved_at` (dernier relevé), calculé à l'écriture."""
+        return {**self._snapshot(), "saved_at": _iso(dt_util.utcnow())}
+
+    def _restore(self, now: datetime) -> None:
+        """Applique l'état persisté avant la ligne de base (tolérant).
+
+        Reprend clé par clé ce qui est valide ET concerne une alerte
+        actuellement activée ; le reste est recalculé depuis les données.
+        Un état trop ancien ou sans `saved_at` valide est ignoré.
+        """
+        raw, self._restored = self._restored, None
+        self._restored_keys = set()
+        if not raw:
+            return
+        saved_at = _parse(raw.get("saved_at"))
+        if saved_at is None or (now - saved_at).total_seconds() > STORE_MAX_AGE:
+            return
+        keys = self._restored_keys
+        if ALERT_WAN in self.enabled:
+            internet = _Outage.from_dict(raw.get("internet"), saved_at)
+            links = raw.get("links")
+            restored_links = {
+                str(k): _Outage.from_dict(v, saved_at)
+                for k, v in (links.items() if isinstance(links, dict) else [])
+            }
+            self._internet = internet
+            self._links = {k: v for k, v in restored_links.items() if v.alerted}
+            if internet.alerted or self._links:
+                keys.add("wan")
+        if ALERT_LATENCY in self.enabled and raw.get("latency_alerted") is True:
+            since = _parse(raw.get("latency_since"))
+            if since is not None:
+                self._latency_high_since, self._latency_alerted = since, True
+                keys.add("latency")
+        update = raw.get("update_available")
+        if ALERT_FIRMWARE in self.enabled and isinstance(update, bool):
+            self._update_available = update
+            keys.add("update")
+        stopped = raw.get("stopped_services")
+        if (ALERT_SERVICES in self.enabled and isinstance(stopped, list)
+                and all(isinstance(s, str) for s in stopped)):
+            self._stopped_services = set(stopped)
+            keys.add("services")
+        tunnels = raw.get("tunnels_up")
+        if (ALERT_VPN in self.enabled and isinstance(tunnels, dict)
+                and all(isinstance(v, bool) for v in tunnels.values())):
+            self._tunnels_up = {str(k): v for k, v in tunnels.items()}
+            keys.add("tunnels")
+        if ALERT_DISK in self.enabled and isinstance(raw.get("disk_alerted"), bool):
+            self._disk_alerted = raw["disk_alerted"]
+            keys.add("disk")
+        if (ALERT_TEMPERATURE in self.enabled
+                and isinstance(raw.get("temp_alerted"), bool)):
+            self._temp_alerted = raw["temp_alerted"]
+            keys.add("temp")
+
+    @callback
+    def _save_if_changed(self, now: datetime) -> None:
+        """Planifie une écriture différée si l'état a changé (ou est périmé)."""
+        snapshot = self._snapshot()
+        fresh = (
+            self._last_save_at is not None
+            and (now - self._last_save_at).total_seconds() < STORE_REFRESH
+        )
+        if snapshot == self._last_saved and fresh:
+            return
+        self._last_saved, self._last_save_at = snapshot, now
+        self._store.async_delay_save(self._data_to_save, STORE_SAVE_DELAY)
 
     @property
     def active(self) -> bool:
@@ -170,34 +380,60 @@ class OPNsenseAlerts:
         now = dt_util.utcnow()
         if not self._baseline_done:
             self._take_baseline(data, now)
-            return
+            if not self._restored_keys:
+                self._save_if_changed(now)
+                return
+            # État restauré : évalue tout de suite pour notifier ce qui a
+            # changé pendant l'arrêt (ex. « rétabli » d'une coupure notifiée).
         for title, message, tag in self._evaluate(data, now):
-            self.hass.async_create_task(self._send(title, message, tag))
+            self.entry.async_create_task(
+                self.hass,
+                self._send(title, message, tag),
+                name=f"{DOMAIN} alerte {tag}",
+            )
+        self._save_if_changed(now)
 
     def _take_baseline(self, data: dict, now: datetime) -> None:
-        """Mémorise l'état initial sans notifier."""
+        """Mémorise l'état initial sans notifier (en reprenant l'état restauré)."""
         self._baseline_done = True
-        if _wan_up(data) is False:
+        self._restore(now)
+        keys = self._restored_keys
+        # Coupure en cours : début à now sauf coupure notifiée restaurée. Si
+        # le lien n'est plus hors ligne, une coupure restaurée sera close
+        # (« rétabli ») par la première évaluation ; si elle continue, le
+        # message de retour sera un message normal.
+        wan = _wan_up(data)
+        if wan is False and self._internet.since is None:
             self._internet.since = now
+        if wan is not True:
+            self._internet.restored_seen = None
         for link in data.get("_wans") or []:
             outage = self._links.setdefault(link["id"], _Outage())
-            if link["online"] is False:
+            if link["online"] is False and outage.since is None:
                 outage.since = now
+            if link["online"] is not True:
+                outage.restored_seen = None
         self._groups_active = {
             g["name"]: tuple(g["active"]) for g in data.get("_wan_groups") or []
         }
         self._default_link = (default_link(data.get("_wans") or []) or {}).get("id")
-        self._update_available = _has_update_available(data)
-        self._stopped_services = set(
-            _services_attributes(data).get("stopped") or []
-        )
-        self._tunnels_up = {
-            t["device"]: t["up"] for t in (_tunnels(data) or [])
-        }
-        disk = _root_disk_used_percent(data)
-        self._disk_alerted = disk is not None and disk >= DISK_ALERT_PCT
-        temp = _temp_cpu(data)
-        self._temp_alerted = temp is not None and temp >= self.temp_threshold
+        # Repli par clé : ce qui n'a pas été restauré est pris dans les données.
+        if "update" not in keys:
+            self._update_available = _has_update_available(data)
+        if "services" not in keys:
+            self._stopped_services = set(
+                _services_attributes(data).get("stopped") or []
+            )
+        if "tunnels" not in keys:
+            self._tunnels_up = {
+                t["device"]: t["up"] for t in (_tunnels(data) or [])
+            }
+        if "disk" not in keys:
+            disk = _root_disk_used_percent(data)
+            self._disk_alerted = disk is not None and disk >= DISK_ALERT_PCT
+        if "temp" not in keys:
+            temp = _temp_cpu(data)
+            self._temp_alerted = temp is not None and temp >= self.temp_threshold
 
     def _evaluate(self, data: dict, now: datetime) -> list[tuple[str, str, str]]:
         """Renvoie les notifications à envoyer pour ce cycle."""
@@ -359,11 +595,25 @@ class OPNsenseAlerts:
             via = f" par {', '.join(online)}" if multi and online else ""
             still = (f" {', '.join(offline)} toujours hors ligne."
                      if multi and offline else "")
+            if self._internet.last_seen is not None:
+                # Coupure à cheval sur un redémarrage de HA : durée inconnue.
+                known = (self._internet.last_seen
+                         - self._internet.last_since).total_seconds()
+                detail = (
+                    f"Internet est rétabli{via} (constaté au redémarrage de "
+                    f"l'intégration à {_hhmm(now)}) : coupure d'au moins "
+                    f"{_fmt_duration(known)}, dernier relevé hors ligne à "
+                    f"{_hhmm(self._internet.last_seen)}.{still}"
+                )
+            else:
+                detail = (
+                    f"Internet est revenu{via} à {_hhmm(now)} après "
+                    f"{_fmt_duration(self._internet.last_elapsed)} de coupure "
+                    f"(depuis {_hhmm(self._internet.last_since)}).{still}"
+                )
             internet.append((
                 f"🟢 {name} : {'Internet' if multi else 'WAN'} rétabli",
-                f"Internet est revenu{via} à {_hhmm(now)} après "
-                f"{_fmt_duration(self._internet.last_elapsed)} de coupure "
-                f"(depuis {_hhmm(self._internet.last_since)}).{still}",
+                detail,
                 "wan",
             ))
 
@@ -382,10 +632,23 @@ class OPNsenseAlerts:
                     f"wan-{link['id']}",
                 ))
             else:
+                if outage.last_seen is not None:
+                    known = (outage.last_seen - outage.last_since).total_seconds()
+                    detail = (
+                        f"Le lien {link['name']} est rétabli (constaté au "
+                        f"redémarrage de l'intégration à {_hhmm(now)}) : "
+                        f"coupure d'au "
+                        f"moins {_fmt_duration(known)}, dernier relevé hors "
+                        f"ligne à {_hhmm(outage.last_seen)}."
+                    )
+                else:
+                    detail = (
+                        f"Le lien {link['name']} est revenu à {_hhmm(now)} "
+                        f"après {_fmt_duration(outage.last_elapsed)} de coupure."
+                    )
                 out.append((
                     f"🟢 {name} : {link['name']} rétabli",
-                    f"Le lien {link['name']} est revenu à {_hhmm(now)} après "
-                    f"{_fmt_duration(outage.last_elapsed)} de coupure.",
+                    detail,
                     f"wan-{link['id']}",
                 ))
         out += internet

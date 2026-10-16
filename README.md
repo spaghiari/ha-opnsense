@@ -27,7 +27,7 @@ A custom Home Assistant integration that exposes your **OPNsense firewall** as a
 ### WAN monitoring
 - **Public IPv4 and IPv6** addresses
 - **Real-time throughput** (in/out, in Mbps)
-- **Total transferred** (in/out, in GB, `TOTAL_INCREASING` compatible with `utility_meter`)
+- **Total transferred** (in/out, in GB, `TOTAL_INCREASING` compatible with `utility_meter`): a running total that never drops (WAN link reconnects and firewall reboots no longer cause spikes in statistics), plus a total per link in multi-WAN
 - **Top 5 destinations** with reverse DNS resolution
 - **WAN connectivity** binary sensor
 
@@ -61,7 +61,7 @@ A custom Home Assistant integration that exposes your **OPNsense firewall** as a
 ## 📋 Prerequisites
 
 ### Supported versions
-- Home Assistant Core **2024.4.0** or newer
+- Home Assistant Core **2025.2.0** or newer (the auto-created dashboard needs the lovelace API introduced in 2025.2; on older versions the integration still works but the dashboard is skipped with a single warning)
 - OPNsense **26.1** or newer (older versions may work but are untested)
 
 ### OPNsense setup
@@ -203,9 +203,16 @@ If a card is missing, the integration logs a warning (filter `opnsense_custom`)
 and that card renders as "Custom element doesn't exist" - install it and reload.
 
 > **Managed dashboard.** The layout is refreshed when the integration ships a
-> new template version, so manual edits to it may be overwritten on upgrade. To
-> customise freely, turn the option off and duplicate the dashboard, or start
-> from [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml).
+> new template version, when you change the theme, when a WAN link appears or
+> disappears, or when one of the firewall's entities is renamed. Your manual
+> edits are **never overwritten silently**: if the dashboard was modified, a
+> **Repairs** alert (Settings → System → Repairs) offers to reset it to the new
+> layout (your changes would then be lost) - or just ignore it to keep yours.
+> The dashboard URL of each firewall is remembered and never changes.
+> Known limitation: this dashboard does not appear in Settings → Dashboards
+> (it is registered directly in the sidebar). To customise freely, turn the
+> option off and duplicate the dashboard, or start from
+> [`dashboards/opnsense.yaml`](dashboards/opnsense.yaml).
 
 ---
 

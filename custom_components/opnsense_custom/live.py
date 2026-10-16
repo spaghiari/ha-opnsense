@@ -71,6 +71,9 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Cumul depuis la dernière publication
         self._acc: dict[str, list[int]] = {}
         self._acc_time = 0.0
+        # Identifiants WAN attendus / comptés sur l'intervalle courant
+        self._wanted: set[str] = set()
+        self._counted: set[str] = set()
         self._prev_time: float | None = None
         self._cpu: dict[str, Any] | None = None
         self._last_publish = monotonic()
@@ -82,6 +85,11 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "error": None},
         }
         self.data = {}
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Pas de polling : `homeassistant.update_entity` renvoie la donnée
+        courante (les flux poussent via `async_set_updated_data`)."""
+        return self.data
 
     # ------------------------------------------------------------------
     def start(self) -> None:
@@ -191,6 +199,7 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         wanted = self._wan_identifier()
         if isinstance(wanted, str):
             wanted = [wanted]
+        self._wanted = set(wanted)
         interfaces = event.get("interfaces") or {}
         counted = False
         for ident in wanted:
@@ -205,6 +214,7 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             acc = self._acc.setdefault(ident, [0, 0])
             acc[0] += rx
             acc[1] += tx
+            self._counted.add(ident)
             counted = True
         if counted:
             self._acc_time += elapsed
@@ -220,6 +230,10 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._last_publish = monotonic()
         data = dict(self.data or {})
+        # Jamais de débit hérité d'un intervalle précédent : "wan"/"wans" sont
+        # retirés puis réécrits uniquement depuis l'intervalle courant.
+        data.pop("wan", None)
+        data.pop("wans", None)
         if self._acc_time > 0:
             per_link = {
                 ident: {
@@ -229,12 +243,16 @@ class OPNsenseLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 for ident, (rx, tx) in self._acc.items()
             }
             data["wans"] = per_link
-            data["wan"] = {
-                "in_bps": sum(r["in_bps"] for r in per_link.values()),
-                "out_bps": sum(r["out_bps"] for r in per_link.values()),
-            }
-            self._acc = {}
-            self._acc_time = 0.0
+            # Somme globale seulement si tous les liens attendus ont été
+            # comptés (sinon repli sur le polling rapide).
+            if self._wanted and self._wanted <= self._counted:
+                data["wan"] = {
+                    "in_bps": sum(r["in_bps"] for r in per_link.values()),
+                    "out_bps": sum(r["out_bps"] for r in per_link.values()),
+                }
+        self._acc = {}
+        self._acc_time = 0.0
+        self._counted = set()
         if self._cpu is not None:
             data["cpu"] = self._cpu
         self.async_set_updated_data(data)

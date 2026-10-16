@@ -66,7 +66,7 @@ DASHBOARD_URL_PATH = "opnsense"
 # Version du gabarit de dashboard. Incrémenter pour re-semer le design
 # par défaut au prochain chargement (les éditions manuelles seront alors
 # remplacées - le dashboard auto est "géré" par l'intégration).
-DASHBOARD_TEMPLATE_VERSION = 14
+DASHBOARD_TEMPLATE_VERSION = 15
 
 # Valeurs par défaut
 DEFAULT_PORT = 443
@@ -106,6 +106,9 @@ API_ENDPOINTS = {
     "firmware_status": "/api/core/firmware/status",
     "firmware_check": "/api/core/firmware/check",
     "firmware_update": "/api/core/firmware/update",
+    # Mise à jour majeure (statut firmware "upgrade") et suivi de progression
+    "firmware_upgrade": "/api/core/firmware/upgrade",
+    "firmware_upgradestatus": "/api/core/firmware/upgradestatus",
     "system_information": "/api/diagnostics/system/system_information",
     "system_resources": "/api/diagnostics/system/system_resources",
     "system_disk": "/api/diagnostics/system/system_disk",

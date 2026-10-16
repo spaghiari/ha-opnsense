@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -22,9 +23,11 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
+from .cleanup import async_setup_pruning
 from .const import DOMAIN
 from .coordinator import (
     OPNsenseDataCoordinator,
@@ -32,6 +35,7 @@ from .coordinator import (
     find_wan_row,
     wan_counters,
 )
+from .totals import accumulate
 from .wans import (
     default_link,
     find_group,
@@ -1172,14 +1176,21 @@ async def async_setup_entry(
     hub: OPNsenseDataCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities = [
-        OPNsenseSensor(hub, entry, description, value_fn)
+        # Totaux WAN : cumul de deltas restauré au redémarrage (cf. totals.py)
+        OPNsenseTrafficTotalSensor(
+            hub, entry, description, TRAFFIC_TOTAL_INDEX[description.key],
+            _wan_devices,
+        )
+        if description.key in TRAFFIC_TOTAL_INDEX
+        else OPNsenseSensor(hub, entry, description, value_fn)
         for description, value_fn in SENSOR_DESCRIPTIONS
     ]
     async_add_entities(entities)
 
     # Multi-WAN : capteurs par lien et par groupe de passerelles, créés au
     # démarrage puis dès qu'un nouveau lien / groupe apparaît.
-    known: set[str] = set()
+    # `known` vit sur le hub : cleanup.py en retire les clés supprimées.
+    known = hub.dynamic_known.setdefault("sensor", set())
 
     def _sync_dynamic() -> None:
         data = hub.fast.data or {}
@@ -1192,6 +1203,10 @@ async def async_setup_entry(
                 OPNsenseLinkSensor(hub, entry, link, description, value_fn)
                 for description, value_fn in LINK_SENSOR_DESCRIPTIONS
             ]
+            new += [
+                OPNsenseLinkTrafficTotalSensor(hub, entry, link, description, index)
+                for description, index in LINK_TOTAL_DESCRIPTIONS
+            ]
         for group in data.get("_wan_groups") or []:
             if not group.get("name") or f"group:{group['name']}" in known:
                 continue
@@ -1202,6 +1217,8 @@ async def async_setup_entry(
 
     _sync_dynamic()
     entry.async_on_unload(hub.fast.async_add_listener(_sync_dynamic))
+    # Suppression prudente des entités dont le lien / groupe a disparu.
+    entry.async_on_unload(async_setup_pruning(hass, entry, hub))
 
 
 # Rythme de rafraîchissement de chaque capteur (les autres : polling lent).
@@ -1381,6 +1398,196 @@ class OPNsenseLinkSensor(OPNsenseSensor):
                 [c for c in (hub.live, hub.fast) if c is not None]
                 if rate else [hub.fast]
             ),
+        )
+        self._attr_unique_id = f"{entry.entry_id}_wan_{link_id}_{description.key}"
+        self._attr_translation_placeholders = {"wan": link["name"]}
+
+    @property
+    def available(self) -> bool:
+        """Indisponible si le lien a disparu (passerelle supprimée, exclue)."""
+        return super().available and find_link(
+            self._hub.merged, self._link_id
+        ) is not None
+
+
+# ============================================================
+#  Totaux de trafic : cumul de deltas par interface
+# ============================================================
+#
+# Les compteurs bruts des interfaces repartent de zéro (reconnexion pppoe,
+# reboot) ou disparaissent un cycle (lien absent) : leur somme brute chute et
+# HA y voit un reset TOTAL_INCREASING. On cumule donc les deltas positifs
+# interface par interface (totals.accumulate), restaurés au redémarrage.
+
+# Clé du sensor global -> index du compteur (0 = reçu, 1 = émis)
+TRAFFIC_TOTAL_INDEX = {"wan_total_received": 0, "wan_total_transmitted": 1}
+
+_TOTAL = {
+    "device_class": SensorDeviceClass.DATA_SIZE,
+    "native_unit_of_measurement": UnitOfInformation.BYTES,
+    "suggested_unit_of_measurement": UnitOfInformation.GIGABYTES,
+    "suggested_display_precision": 2,
+    "state_class": SensorStateClass.TOTAL_INCREASING,
+}
+
+# Totaux par lien WAN (multi-WAN uniquement) : (description, index du compteur)
+LINK_TOTAL_DESCRIPTIONS: tuple[tuple[SensorEntityDescription, int], ...] = (
+    (
+        SensorEntityDescription(
+            key="total_received", translation_key="link_total_received",
+            icon="mdi:download", **_TOTAL,
+        ),
+        0,
+    ),
+    (
+        SensorEntityDescription(
+            key="total_transmitted", translation_key="link_total_transmitted",
+            icon="mdi:upload", **_TOTAL,
+        ),
+        1,
+    ),
+)
+
+
+class _TrafficTotalExtraData(ExtraStoredData):
+    """État restauré : cumul + références, compatible SensorExtraStoredData."""
+
+    def __init__(
+        self, native_value: Any, unit: str | None, baselines: dict[str, int]
+    ) -> None:
+        """Initialise."""
+        self._native_value = native_value
+        self._unit = unit
+        self._baselines = baselines
+
+    def as_dict(self) -> dict[str, Any]:
+        """Mêmes clés que SensorExtraStoredData, plus les références."""
+        return {
+            "native_value": self._native_value,
+            "native_unit_of_measurement": self._unit,
+            "baselines": self._baselines,
+        }
+
+
+class OPNsenseTrafficTotalSensor(OPNsenseSensor, RestoreSensor):
+    """Total d'octets WAN : cumul monotone de deltas, restauré au redémarrage."""
+
+    def __init__(
+        self,
+        hub: OPNsenseDataCoordinator,
+        entry: ConfigEntry,
+        description: SensorEntityDescription,
+        index: int,
+        devices_fn: Callable[[dict], list[str]],
+        coordinators: list | None = None,
+    ) -> None:
+        """`index` : 0 = reçus, 1 = émis ; `devices_fn` : interfaces à cumuler."""
+        super().__init__(
+            hub, entry, description, lambda data: self._acc,
+            coordinators=coordinators,
+        )
+        self._index = index
+        self._devices_fn = devices_fn
+        self._acc: float | int | None = None
+        self._baselines: dict[str, int] = {}
+
+    def _counters(self, data: dict) -> dict[str, int]:
+        """Compteurs actuels, par interface présente dans ce cycle."""
+        counters: dict[str, int] = {}
+        for device in self._devices_fn(data):
+            values = wan_counters(data, device)
+            if values is not None:
+                counters[device] = values[self._index]
+        return counters
+
+    def _update(self) -> None:
+        """Intègre les compteurs du cycle (seulement si le polling a réussi)."""
+        if not self.coordinator.last_update_success:
+            return
+        counters = self._counters(self._hub.merged)
+        if self._acc is None:
+            # Amorçage sans état restauré : valeur brute actuelle (= ancien
+            # comportement), références = compteurs actuels.
+            if counters:
+                self._acc = sum(counters.values())
+                self._baselines = dict(counters)
+            return
+        self._acc, self._baselines = accumulate(
+            self._baselines, counters, self._acc
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Restaure le cumul et les références, puis intègre le cycle courant."""
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_sensor_data()) is not None:
+            value = last.native_value
+            if isinstance(value, int) and not isinstance(value, bool):
+                self._acc = value  # entier gardé tel quel (pas de perte float)
+            else:
+                try:
+                    self._acc = float(value)  # type: ignore[arg-type]
+                    if self._acc.is_integer():
+                        self._acc = int(self._acc)
+                except (TypeError, ValueError):
+                    self._acc = None  # unknown/unavailable : amorçage à neuf
+        if self._acc is not None:
+            # Sans références valides : {} -> la première vue de chaque
+            # interface pose sa référence sans delta, pas de saut. (Depuis la
+            # 2.3.8, rien n'est restauré : l'amorçage reprend la somme brute,
+            # égale à l'ancienne valeur sauf lien absent au premier cycle.)
+            extra = await self.async_get_last_extra_data()
+            baselines = (extra.as_dict() if extra else {}).get("baselines")
+            if isinstance(baselines, dict):
+                self._baselines = {
+                    str(k): v for k, v in baselines.items()
+                    if isinstance(v, int) and not isinstance(v, bool)
+                }
+        self._update()
+
+    def _handle_coordinator_update(self) -> None:
+        """Accumule les deltas du cycle puis publie l'état."""
+        self._update()
+        super()._handle_coordinator_update()
+
+    @property
+    def native_value(self) -> float | int | None:
+        """Cumul depuis la mise en service (ne décroît jamais)."""
+        return self._acc
+
+    @property
+    def extra_restore_state_data(self) -> ExtraStoredData:
+        """Persiste cumul, unité et références (clé "baselines" en plus)."""
+        return _TrafficTotalExtraData(
+            self._acc, self.native_unit_of_measurement, self._baselines
+        )
+
+
+class OPNsenseLinkTrafficTotalSensor(OPNsenseTrafficTotalSensor):
+    """Total d'octets d'un lien WAN donné (une seule interface)."""
+
+    def __init__(
+        self,
+        hub: OPNsenseDataCoordinator,
+        entry: ConfigEntry,
+        link: dict,
+        description: SensorEntityDescription,
+        index: int,
+    ) -> None:
+        """Initialise ; `link` = le lien tel qu'il était à la création."""
+        link_id = link["id"]
+        self._link_id = link_id
+
+        def _devices(data: dict) -> list[str]:
+            # Device résolu à chaque cycle : il peut être inconnu à la création
+            # ou changer (renumérotation pppoe) ; un nouveau device démarre
+            # avec un delta nul grâce aux références indexées par device.
+            current = find_link(data, link_id)
+            device = current.get("device") if current else None
+            return [device] if device else []
+
+        super().__init__(
+            hub, entry, description, index, _devices,
+            coordinators=[hub.fast],
         )
         self._attr_unique_id = f"{entry.entry_id}_wan_{link_id}_{description.key}"
         self._attr_translation_placeholders = {"wan": link["name"]}
